@@ -1,0 +1,14 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    stripe (13.5.1)
+
+PLATFORMS
+  arm64-darwin-22
+  ruby
+
+DEPENDENCIES
+  stripe (~> 13.0)
+
+BUNDLED WITH
+   2.7.0

@@ -14,11 +14,10 @@ import (
 )
 
 var (
-	styleSelected = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
-	styleDim      = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	styleOK       = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	styleErr      = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	styleBorder   = lipgloss.NewStyle().BorderStyle(lipgloss.NormalBorder()).BorderRight(true).BorderForeground(lipgloss.Color("238"))
+	styleDim    = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	styleOK     = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+	styleErr    = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	styleBorder = lipgloss.NewStyle().BorderStyle(lipgloss.NormalBorder()).BorderRight(true).BorderForeground(lipgloss.Color("238"))
 )
 
 // callItem wraps proxy.Call to satisfy the list.Item interface.
@@ -45,11 +44,11 @@ type NewCallMsg proxy.Call
 
 // Model is the root Bubble Tea model.
 type Model struct {
-	list     list.Model
-	detail   viewport.Model
-	width    int
-	height   int
-	focused  string // "list" | "detail"
+	list    list.Model
+	detail  viewport.Model
+	width   int
+	height  int
+	focused string // "list" | "detail"
 }
 
 func New() Model {
