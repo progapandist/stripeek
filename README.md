@@ -90,6 +90,7 @@ stripeek proxies every request to the real Stripe API and captures the full requ
 |---|---|
 | `tab` / `shift+tab` | Switch panes |
 | `?` | Open / close shortcuts overlay |
+| `ctrl+x` | Clear all history (memory + disk) |
 | `q` / `ctrl+c` | Quit |
 
 **Calls pane**

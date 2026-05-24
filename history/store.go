@@ -51,6 +51,15 @@ func (s *Store) Load() ([]proxy.Call, error) {
 	return append([]proxy.Call(nil), s.calls...), nil
 }
 
+func (s *Store) Clear() error {
+	s.calls = nil
+	err := os.Remove(s.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
 func (s *Store) Append(c proxy.Call) error {
 	if s.limit <= 0 {
 		return nil

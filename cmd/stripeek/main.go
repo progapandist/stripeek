@@ -64,6 +64,11 @@ func main() {
 
 	groups := tui.NewGroupManager(savedCalls)
 	m := tui.NewWithGroupManager(historyLimit, savedCalls, groups)
+	m.OnClear = func() {
+		if err := store.Clear(); err != nil {
+			fmt.Fprintf(os.Stderr, "history clear: %v\n", err)
+		}
+	}
 	p := tea.NewProgram(m, tea.WithAltScreen())
 
 	// Feed captured calls into the TUI as messages.

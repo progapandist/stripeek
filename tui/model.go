@@ -55,6 +55,7 @@ type Model struct {
 	groupFilterID string
 	groups        []groupEntry
 	shortcuts     bool
+	OnClear       func() // called after in-memory history is wiped
 }
 
 func New() Model {
@@ -139,6 +140,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.tree.focused = m.focused == focusDetail
 			return m, nil
 		}
+		if msg.String() == "ctrl+x" && !m.inputActive() {
+			m.clearHistory()
+			return m, nil
+		}
 		// esc in the inspector returns to the list, unless a key filter is
 		// active (then esc clears the filter — handled by the tree).
 		if m.focused == focusDetail && msg.String() == "esc" && !m.tree.typing && !m.tree.filterOn {
@@ -208,6 +213,22 @@ func (m *Model) advanceFocus(reverse bool) {
 		idx = (idx + 1) % len(order)
 	}
 	m.focused = order[idx]
+}
+
+func (m *Model) clearHistory() {
+	m.allCalls = nil
+	m.filter = ""
+	m.filtering = false
+	m.groupMgr = NewGroupManager(nil)
+	m.groupsVisible = false
+	m.groupCursor = 0
+	m.groupFilterID = ""
+	m.focused = focusList
+	m.tree.focused = false
+	m.rebuildList()
+	if m.OnClear != nil {
+		m.OnClear()
+	}
 }
 
 func (m *Model) syncTree() {
