@@ -142,6 +142,58 @@ func TestEnterInspectsSelectedRequestAndEscReturnsToList(t *testing.T) {
 	}
 }
 
+func TestNewCallsFollowTopSelection(t *testing.T) {
+	first := sampleCall()
+	first.Path = "/v1/first"
+	first.RequestURI = first.Path
+	second := sampleCall()
+	second.Path = "/v1/second"
+	second.RequestURI = second.Path
+
+	m := drive(New(),
+		tea.WindowSizeMsg{Width: 100, Height: 30},
+		NewCallMsg(first),
+		NewCallMsg(second),
+	)
+	selected, ok := m.list.SelectedItem().(callItem)
+	if !ok {
+		t.Fatal("no selected call")
+	}
+	if selected.call.Path != "/v1/second" || m.list.Index() != 0 {
+		t.Fatalf("selected %q at index %d, want newest at top", selected.call.Path, m.list.Index())
+	}
+	if m.selected.Path != "/v1/second" {
+		t.Fatalf("inspector selected %q, want newest call", m.selected.Path)
+	}
+}
+
+func TestNewCallsPreserveManualOlderSelection(t *testing.T) {
+	first := sampleCall()
+	first.Path = "/v1/first"
+	first.RequestURI = first.Path
+	second := sampleCall()
+	second.Path = "/v1/second"
+	second.RequestURI = second.Path
+	third := sampleCall()
+	third.Path = "/v1/third"
+	third.RequestURI = third.Path
+
+	m := drive(New(),
+		tea.WindowSizeMsg{Width: 100, Height: 30},
+		NewCallMsg(first),
+		NewCallMsg(second),
+		key("down"),
+		NewCallMsg(third),
+	)
+	selected, ok := m.list.SelectedItem().(callItem)
+	if !ok {
+		t.Fatal("no selected call")
+	}
+	if selected.call.Path != "/v1/first" {
+		t.Fatalf("selected %q, want manually selected older call", selected.call.Path)
+	}
+}
+
 // filterCall has disjoint request/response key names so a section-scoped
 // filter's effect can be asserted unambiguously.
 func filterCall() proxy.Call {
@@ -270,6 +322,21 @@ func TestInspectorWrapsLongScalarValues(t *testing.T) {
 	}
 }
 
+func TestInspectorKeepsCursorVisibleBelowWrappedScalar(t *testing.T) {
+	tree := jsonTree{width: 28, height: 5, focused: true}
+	tree.setCall(proxy.Call{
+		ReqBody:  []byte("{}"),
+		RespBody: []byte(`{"long":"` + strings.Repeat("x", 160) + `","zz_after":true}`),
+	})
+	tree.cursor = tree.skipSepBackward(len(tree.visible) - 1)
+	tree.clampOffset()
+
+	view := tree.View()
+	if !strings.Contains(view, "zz_after") {
+		t.Fatalf("cursor line below wrapped scalar is not visible:\n%s", view)
+	}
+}
+
 func curKey(m Model) string {
 	if n := m.tree.current(); n != nil {
 		return n.key
@@ -386,6 +453,27 @@ func TestGroupNavigatorFiltersCallsByGroup(t *testing.T) {
 	view = m.View()
 	if !strings.Contains(view, "/v1/first") || strings.Contains(view, "/v1/second") {
 		t.Fatalf("group navigation did not move to first group:\n%s", view)
+	}
+}
+
+func TestGroupManagerSkipsSavedNames(t *testing.T) {
+	saved := make([]proxy.Call, 0, 4)
+	for i, name := range []string{"Group Teal", "Group Amber", "Group Emerald", "Group Blue"} {
+		c := sampleCall()
+		c.Group = &proxy.Group{
+			ID:        fmt.Sprintf("saved-%d", i),
+			Name:      name,
+			StartedAt: time.Now().Add(time.Duration(i) * time.Second),
+		}
+		saved = append(saved, c)
+	}
+
+	group := NewGroupManager(saved).Start()
+	if group.Name == "Group Emerald" {
+		t.Fatalf("new group repeated saved name %q", group.Name)
+	}
+	if group.Name != "Group Fuchsia" {
+		t.Fatalf("new group name = %q, want Group Fuchsia", group.Name)
 	}
 }
 

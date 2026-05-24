@@ -146,6 +146,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case NewCallMsg:
+		followTop := len(m.list.Items()) == 0 || m.list.Index() == 0
 		m.nextID++
 		call := proxy.Call(msg)
 		if call.Group == nil {
@@ -159,6 +160,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.allCalls = m.allCalls[:m.maxCalls]
 		}
 		m.rebuildList()
+		if followTop && len(m.list.Items()) > 0 {
+			m.list.Select(0)
+			m.syncTree()
+		}
 		return m, nil
 	}
 

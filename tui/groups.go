@@ -41,19 +41,24 @@ var groupPalette = []groupColor{
 // pipeline. It is safe for the Bubble Tea update loop and proxy goroutine to
 // access concurrently.
 type GroupManager struct {
-	mu     sync.RWMutex
-	active *proxy.Group
-	next   int
+	mu        sync.RWMutex
+	active    *proxy.Group
+	next      int
+	usedNames map[string]bool
 }
 
 func NewGroupManager(saved []proxy.Call) *GroupManager {
 	seen := map[string]bool{}
+	usedNames := map[string]bool{}
 	for _, c := range saved {
 		if c.Group != nil && c.Group.ID != "" {
 			seen[c.Group.ID] = true
+			if c.Group.Name != "" {
+				usedNames[c.Group.Name] = true
+			}
 		}
 	}
-	return &GroupManager{next: len(seen)}
+	return &GroupManager{next: len(seen), usedNames: usedNames}
 }
 
 func (g *GroupManager) Current() *proxy.Group {
@@ -72,12 +77,14 @@ func (g *GroupManager) Start() proxy.Group {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
+	if g.usedNames == nil {
+		g.usedNames = map[string]bool{}
+	}
 	idx := g.next
-	color := groupPalette[idx%len(groupPalette)]
-	cycle := idx / len(groupPalette)
-	name := "Group " + color.name
-	if cycle > 0 {
-		name = fmt.Sprintf("%s %d", name, cycle+1)
+	color, name := groupForIndex(idx)
+	for g.usedNames[name] {
+		idx++
+		color, name = groupForIndex(idx)
 	}
 	now := time.Now()
 	group := &proxy.Group{
@@ -89,8 +96,19 @@ func (g *GroupManager) Start() proxy.Group {
 		StartedAt: now,
 	}
 	g.active = group
-	g.next++
+	g.next = idx + 1
+	g.usedNames[name] = true
 	return *cloneGroup(group)
+}
+
+func groupForIndex(idx int) (groupColor, string) {
+	color := groupPalette[idx%len(groupPalette)]
+	cycle := idx / len(groupPalette)
+	name := "Group " + color.name
+	if cycle > 0 {
+		name = fmt.Sprintf("%s %d", name, cycle+1)
+	}
+	return color, name
 }
 
 func cloneGroup(g *proxy.Group) *proxy.Group {

@@ -246,15 +246,39 @@ func (t *jsonTree) skipSepBackward(pos int) int {
 }
 
 func (t *jsonTree) clampOffset() {
+	if len(t.visible) == 0 {
+		t.offset = 0
+		return
+	}
+	if t.offset >= len(t.visible) {
+		t.offset = len(t.visible) - 1
+	}
 	if t.cursor < t.offset {
 		t.offset = t.cursor
 	}
-	if t.height > 0 && t.cursor >= t.offset+t.height {
-		t.offset = t.cursor - t.height + 1
+	if t.height > 0 {
+		for t.offset < t.cursor && t.rowsBeforeCursor() >= t.height {
+			t.offset++
+		}
 	}
 	if t.offset < 0 {
 		t.offset = 0
 	}
+}
+
+func (t *jsonTree) rowsBeforeCursor() int {
+	rows := 0
+	for i := t.offset; i < t.cursor && i < len(t.visible); i++ {
+		rows += t.renderedLineCount(i)
+	}
+	return rows
+}
+
+func (t *jsonTree) renderedLineCount(i int) int {
+	if i < 0 || i >= len(t.visible) {
+		return 0
+	}
+	return max(1, len(t.renderLines(t.visible[i], false)))
 }
 
 func (t *jsonTree) jumpToParent() {
