@@ -18,6 +18,16 @@ const DefaultMaxBodyBytes int64 = 2 << 20
 
 type proxyErrorKey struct{}
 
+// Group identifies a user-created debugging group assigned to captured calls.
+type Group struct {
+	ID        string
+	Name      string
+	Color     string
+	LightHex  string
+	DarkHex   string
+	StartedAt time.Time
+}
+
 // Call is a captured request/response pair.
 type Call struct {
 	Time              time.Time
@@ -37,6 +47,7 @@ type Call struct {
 	Error             string
 	Latency           time.Duration
 	IsWebhook         bool
+	Group             *Group `json:",omitempty"`
 }
 
 type config struct {

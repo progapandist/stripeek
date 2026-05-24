@@ -30,6 +30,7 @@ type jsonNode struct {
 	key         string
 	value       string // rendered value, may include OSC 8 hyperlink sequences
 	plainValue  string // value without hyperlink, used on cursor line
+	linkURL     string // optional OSC 8 target for clickable scalar values
 	suffix      string // dim annotation appended after value (e.g., human timestamp)
 	scalarColor lipgloss.TerminalColor
 	dim         bool // true for null / empty-string values
@@ -74,6 +75,17 @@ func (t *jsonTree) setCall(c proxy.Call) {
 	t.filter = ""
 	t.filterRoot = 0
 	t.rebuild()
+}
+
+func (t *jsonTree) clear() {
+	t.roots = nil
+	t.visible = nil
+	t.cursor = 0
+	t.offset = 0
+	t.typing = false
+	t.filterOn = false
+	t.filter = ""
+	t.filterRoot = 0
 }
 
 func bodyRoot(label string, b []byte) *jsonNode {
@@ -178,7 +190,8 @@ func buildNode(key string, v any) *jsonNode {
 		}
 		// Wrap recognised Stripe IDs in a terminal OSC 8 hyperlink.
 		if s, ok := v.(string); ok {
-			if u := stripeIDURL(s); u != "" {
+			if u := scalarURL(s); u != "" {
+				n.linkURL = u
 				n.value = hyperlink(u, plain)
 			}
 		}
@@ -246,6 +259,13 @@ func stripeIDURL(id string) string {
 		}
 	}
 	return ""
+}
+
+func scalarURL(s string) string {
+	if strings.HasPrefix(s, "https://") || strings.HasPrefix(s, "http://") {
+		return s
+	}
+	return stripeIDURL(s)
 }
 
 // hyperlink wraps text in an OSC 8 terminal hyperlink (iTerm2 / WezTerm / Kitty).
@@ -600,15 +620,16 @@ func (t *jsonTree) View() string {
 		return ""
 	}
 	var b strings.Builder
-	end := t.offset + t.height
-	if end > len(t.visible) {
-		end = len(t.visible)
-	}
 	rendered := 0
-	for i := t.offset; i < end; i++ {
-		b.WriteString(t.renderLine(t.visible[i], i == t.cursor && t.focused))
-		b.WriteByte('\n')
-		rendered++
+	for i := t.offset; i < len(t.visible) && rendered < t.height; i++ {
+		for _, line := range t.renderLines(t.visible[i], i == t.cursor && t.focused) {
+			if rendered >= t.height {
+				break
+			}
+			b.WriteString(line)
+			b.WriteByte('\n')
+			rendered++
+		}
 	}
 	for ; rendered < t.height; rendered++ {
 		b.WriteByte('\n')
@@ -616,9 +637,9 @@ func (t *jsonTree) View() string {
 	return b.String()
 }
 
-func (t *jsonTree) renderLine(vl *visibleLine, isCursor bool) string {
+func (t *jsonTree) renderLines(vl *visibleLine, isCursor bool) []string {
 	if vl.isSep {
-		return ""
+		return []string{""}
 	}
 
 	n := vl.node
@@ -638,14 +659,14 @@ func (t *jsonTree) renderLine(vl *visibleLine, isCursor bool) string {
 	if vl.depth == 0 {
 		label := strings.ToUpper(n.key)
 		if isCursor {
-			return styleCursor.Width(t.width).Render(marker + label)
+			return []string{styleCursor.Width(t.width).Render(fitLine(marker+label, t.width))}
 		}
 		head := styleSectionHeader.Render(marker + label)
 		fill := t.width - lipgloss.Width(head) - 1
 		if fill < 0 {
 			fill = 0
 		}
-		return head + " " + lipgloss.NewStyle().Foreground(colBorder).Render(strings.Repeat("─", fill))
+		return []string{head + " " + lipgloss.NewStyle().Foreground(colBorder).Render(strings.Repeat("─", fill))}
 	}
 
 	// Build the summary suffix for collapsed containers.
@@ -660,19 +681,14 @@ func (t *jsonTree) renderLine(vl *visibleLine, isCursor bool) string {
 	}
 
 	if isCursor {
-		var rest string
-		switch {
-		case n.kind == kindScalar:
-			v := n.plainValue + n.suffix
+		if n.kind == kindScalar {
+			prefix := indent + marker + n.key
 			if n.key != "" {
-				rest = ": " + v
-			} else {
-				rest = v
+				prefix += ": "
 			}
-		default:
-			rest = collapsedSuffix()
+			return t.wrapScalarLines(prefix, n.plainValue+n.suffix, lipgloss.NewStyle(), n.linkURL, true)
 		}
-		return styleCursor.Width(t.width).Render(indent + marker + n.key + rest)
+		return []string{styleCursor.Width(t.width).Render(fitLine(indent+marker+n.key+collapsedSuffix(), t.width))}
 	}
 
 	var b strings.Builder
@@ -693,12 +709,80 @@ func (t *jsonTree) renderLine(vl *visibleLine, isCursor bool) string {
 		if n.key != "" {
 			b.WriteString(styleDim.Render(": "))
 		}
-		b.WriteString(lipgloss.NewStyle().Foreground(n.scalarColor).Render(n.value))
-		if n.suffix != "" {
-			b.WriteString(styleDim.Render(n.suffix))
+		if lipgloss.Width(b.String()+n.value+n.suffix) <= t.width {
+			b.WriteString(lipgloss.NewStyle().Foreground(n.scalarColor).Render(n.value))
+			if n.suffix != "" {
+				b.WriteString(styleDim.Render(n.suffix))
+			}
+			return []string{fitLine(b.String(), t.width)}
 		}
+		return t.wrapScalarLines(b.String(), n.plainValue+n.suffix, lipgloss.NewStyle().Foreground(n.scalarColor), n.linkURL, false)
 	case !n.expanded:
 		b.WriteString(styleDim.Render(collapsedSuffix()))
 	}
-	return lipgloss.NewStyle().MaxWidth(t.width).Render(b.String())
+	return []string{fitLine(b.String(), t.width)}
+}
+
+func (t *jsonTree) wrapScalarLines(prefix string, value string, valueStyle lipgloss.Style, linkURL string, cursor bool) []string {
+	if t.width <= 0 {
+		return []string{""}
+	}
+	prefixWidth := lipgloss.Width(prefix)
+	baseIndent := min(prefixWidth, max(0, t.width-1))
+	continuation := strings.Repeat(" ", baseIndent)
+	lines := []string{}
+
+	if prefixWidth >= t.width {
+		lines = append(lines, fitLine(prefix, t.width))
+		prefix = continuation
+		prefixWidth = lipgloss.Width(prefix)
+	}
+
+	firstWidth := max(1, t.width-prefixWidth)
+	restWidth := max(1, t.width-lipgloss.Width(continuation))
+	chunks := wrapText(value, firstWidth, restWidth)
+	if len(chunks) == 0 {
+		chunks = []string{""}
+	}
+
+	for i, chunk := range chunks {
+		linePrefix := continuation
+		if i == 0 {
+			linePrefix = prefix
+		}
+		renderedChunk := valueStyle.Render(chunk)
+		if linkURL != "" {
+			renderedChunk = hyperlink(linkURL, renderedChunk)
+		}
+		line := linePrefix + renderedChunk
+		lines = append(lines, fitLine(line, t.width))
+	}
+	if cursor {
+		for i, line := range lines {
+			lines[i] = styleCursor.Width(t.width).Render(line)
+		}
+	}
+	return lines
+}
+
+func wrapText(s string, firstWidth, restWidth int) []string {
+	if s == "" {
+		return nil
+	}
+	width := max(1, firstWidth)
+	chunks := []string{}
+	var b strings.Builder
+	for _, r := range s {
+		next := b.String() + string(r)
+		if b.Len() > 0 && lipgloss.Width(next) > width {
+			chunks = append(chunks, b.String())
+			b.Reset()
+			width = max(1, restWidth)
+		}
+		b.WriteRune(r)
+	}
+	if b.Len() > 0 {
+		chunks = append(chunks, b.String())
+	}
+	return chunks
 }

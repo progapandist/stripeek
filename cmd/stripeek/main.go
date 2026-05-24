@@ -48,12 +48,16 @@ func main() {
 		}
 	}()
 
-	m := tui.NewWithCalls(historyLimit, savedCalls)
+	groups := tui.NewGroupManager(savedCalls)
+	m := tui.NewWithGroupManager(historyLimit, savedCalls, groups)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 
 	// Feed captured calls into the TUI as messages.
 	go func() {
 		for c := range calls {
+			if group := groups.Current(); group != nil && !c.Time.Before(group.StartedAt) {
+				c.Group = group
+			}
 			if err := store.Append(c); err != nil {
 				fmt.Fprintf(os.Stderr, "history append: %v\n", err)
 			}

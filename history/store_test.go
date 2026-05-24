@@ -50,3 +50,36 @@ func TestStoreDisabledWhenLimitIsZero(t *testing.T) {
 		t.Fatalf("loaded = %#v, want nil", loaded)
 	}
 }
+
+func TestStorePersistsRequestGroup(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "calls.json")
+	started := time.Now().UTC().Truncate(time.Second)
+	group := &proxy.Group{
+		ID:        "group-123",
+		Name:      "Group Teal",
+		Color:     "Teal",
+		LightHex:  "#0f766e",
+		DarkHex:   "#5eead4",
+		StartedAt: started,
+	}
+	if err := New(path, 10).Append(proxy.Call{
+		Time:   time.Now(),
+		Method: "GET",
+		Path:   "/v1/customers",
+		Status: 200,
+		Group:  group,
+	}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	loaded, err := New(path, 10).Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Fatalf("len(loaded) = %d, want 1", len(loaded))
+	}
+	if loaded[0].Group == nil || loaded[0].Group.ID != group.ID || loaded[0].Group.Name != group.Name {
+		t.Fatalf("loaded group = %#v, want %#v", loaded[0].Group, group)
+	}
+}

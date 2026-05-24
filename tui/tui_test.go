@@ -1,11 +1,14 @@
 package tui
 
 import (
+	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/progapandist/stripeek/proxy"
 )
@@ -40,6 +43,12 @@ func key(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyEnter}
 	case "esc":
 		return tea.KeyMsg{Type: tea.KeyEsc}
+	case "ctrl+g":
+		return tea.KeyMsg{Type: tea.KeyCtrlG}
+	case "up":
+		return tea.KeyMsg{Type: tea.KeyUp}
+	case "down":
+		return tea.KeyMsg{Type: tea.KeyDown}
 	default:
 		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 	}
@@ -233,6 +242,34 @@ func TestInspectorFilterPreservesFolding(t *testing.T) {
 	}
 }
 
+func TestInspectorWrapsLongScalarValues(t *testing.T) {
+	longURL := "https://dashboard.stripe.com/acct_123/test/workbench/logs?object=req_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	tree := jsonTree{width: 32, height: 12, focused: true}
+	tree.setCall(proxy.Call{
+		ReqBody:  []byte("{}"),
+		RespBody: []byte(`{"request_log_url":` + strconv.Quote(longURL) + `}`),
+	})
+	tree.cursor = 3 // response.request_log_url
+	tree.clampOffset()
+
+	view := tree.View()
+	lines := strings.Split(strings.TrimRight(view, "\n"), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected wrapped output, got:\n%s", view)
+	}
+	for _, line := range lines {
+		if got := lipgloss.Width(line); got > tree.width {
+			t.Fatalf("line width = %d, want <= %d\nline: %q\nview:\n%s", got, tree.width, line, view)
+		}
+	}
+	if !strings.Contains(view, "request_log_url") || !strings.Contains(view, "req_ABC") || !strings.Contains(view, "STUVW") {
+		t.Fatalf("wrapped view lost key/value content:\n%s", view)
+	}
+	if !strings.Contains(view, "\x1b]8;;"+longURL+"\x07") {
+		t.Fatalf("wrapped URL was not hyperlinked:\n%s", view)
+	}
+}
+
 func curKey(m Model) string {
 	if n := m.tree.current(); n != nil {
 		return n.key
@@ -285,5 +322,100 @@ func TestNewWithCallsLoadsSavedCallsNewestFirst(t *testing.T) {
 	}
 	if !strings.Contains(view, "/v1/newest") || !strings.Contains(view, "/v1/middle") {
 		t.Errorf("saved calls missing from view:\n%s", view)
+	}
+}
+
+func TestRequestGroupingStartsGroupAndAssignsNewCalls(t *testing.T) {
+	m := drive(New(),
+		tea.WindowSizeMsg{Width: 120, Height: 36},
+		key("ctrl+g"),
+	)
+	if !m.groupsVisible {
+		t.Fatal("starting a group did not show the group navigator")
+	}
+	active := m.groupMgr.Current()
+	if active == nil || active.Name != "Group Teal" {
+		t.Fatalf("active group = %#v, want Group Teal", active)
+	}
+
+	m = drive(m, NewCallMsg(sampleCall()))
+	if got := m.allCalls[0].call.Group; got == nil || got.ID != active.ID {
+		t.Fatalf("new call group = %#v, want active group %q", got, active.ID)
+	}
+	view := m.View()
+	for _, want := range []string{"GROUPS", "Group Teal", "1 in Group Teal", "█", "▌"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("grouped view missing %q\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "/v1/customers 200  Group Teal") {
+		t.Fatalf("request row should not repeat the group name:\n%s", view)
+	}
+}
+
+func TestGroupNavigatorFiltersCallsByGroup(t *testing.T) {
+	groups := NewGroupManager(nil)
+	first := groups.Start()
+	second := groups.Start()
+	second.StartedAt = first.StartedAt.Add(time.Second)
+
+	firstCall := sampleCall()
+	firstCall.Path = "/v1/first"
+	firstCall.RequestURI = "/v1/first"
+	firstCall.Group = &first
+	secondCall := sampleCall()
+	secondCall.Path = "/v1/second"
+	secondCall.RequestURI = "/v1/second"
+	secondCall.Group = &second
+
+	m := drive(NewWithCalls(10, []proxy.Call{firstCall, secondCall}),
+		tea.WindowSizeMsg{Width: 120, Height: 40},
+		key("g"),
+		key("tab"),  // focus group navigator
+		key("down"), // newest group: second
+	)
+	if m.focused != "groups" {
+		t.Fatalf("focused = %q, want groups", m.focused)
+	}
+	view := m.View()
+	if !strings.Contains(view, "/v1/second") || strings.Contains(view, "/v1/first") {
+		t.Fatalf("group filter did not isolate second group:\n%s", view)
+	}
+
+	m = drive(m, key("down")) // next group: first
+	view = m.View()
+	if !strings.Contains(view, "/v1/first") || strings.Contains(view, "/v1/second") {
+		t.Fatalf("group navigation did not move to first group:\n%s", view)
+	}
+}
+
+func TestGroupPaneResizesAndScrollsCallList(t *testing.T) {
+	m := drive(NewWithMaxCalls(30), tea.WindowSizeMsg{Width: 120, Height: 36})
+	for i := range 20 {
+		c := sampleCall()
+		c.Path = fmt.Sprintf("/v1/item_%02d", i)
+		c.RequestURI = c.Path
+		m = drive(m, NewCallMsg(c))
+	}
+
+	fullHeight := m.list.Height()
+	m = drive(m, key("g"))
+	groupHeight := m.list.Height()
+	if groupHeight != m.geometry().listH {
+		t.Fatalf("list height = %d, want geometry listH %d", groupHeight, m.geometry().listH)
+	}
+	if groupHeight >= fullHeight {
+		t.Fatalf("group pane did not reduce list height: before=%d after=%d", fullHeight, groupHeight)
+	}
+
+	for range 14 {
+		m = drive(m, key("down"))
+	}
+	selected, ok := m.list.SelectedItem().(callItem)
+	if !ok {
+		t.Fatal("no selected call")
+	}
+	if !strings.Contains(m.View(), selected.call.Path) {
+		t.Fatalf("selected call is not visible after scrolling with group pane open: %s\n%s", selected.call.Path, m.View())
 	}
 }
