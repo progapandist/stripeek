@@ -6,49 +6,11 @@ stripeek runs as a reverse proxy between your application and `api.stripe.com`. 
 
 ## Installation
 
-### If you have Go installed
-
 ```bash
 go install github.com/progapandist/stripeek/cmd/stripeek@latest
 ```
 
 Requires Go 1.24 or later. The binary lands in `$(go env GOPATH)/bin` — make sure that's on your `$PATH`.
-
-### Pre-built binaries (no Go required)
-
-Download the archive for your platform from the [releases page](https://github.com/progapandist/stripeek/releases/latest).
-
-**macOS (Apple Silicon)**
-```bash
-curl -L https://github.com/progapandist/stripeek/releases/latest/download/stripeek_darwin_arm64.tar.gz | tar xz
-mv stripeek /usr/local/bin/
-```
-
-**macOS (Intel)**
-```bash
-curl -L https://github.com/progapandist/stripeek/releases/latest/download/stripeek_darwin_amd64.tar.gz | tar xz
-mv stripeek /usr/local/bin/
-```
-
-`/usr/local/bin` is writable without `sudo` on most macOS setups (Homebrew ensures this). If you get a permissions error, use `~/bin` or any other directory on your `$PATH` instead.
-
-**Linux (amd64)**
-```bash
-curl -L https://github.com/progapandist/stripeek/releases/latest/download/stripeek_linux_amd64.tar.gz | tar xz
-mkdir -p ~/.local/bin && mv stripeek ~/.local/bin/
-```
-
-**Linux (arm64)**
-```bash
-curl -L https://github.com/progapandist/stripeek/releases/latest/download/stripeek_linux_arm64.tar.gz | tar xz
-mkdir -p ~/.local/bin && mv stripeek ~/.local/bin/
-```
-
-Make sure `~/.local/bin` is on your `$PATH` (add `export PATH="$HOME/.local/bin:$PATH"` to your shell profile if needed).
-
-**Windows**
-
-Download `stripeek_windows_amd64.zip` from the [releases page](https://github.com/progapandist/stripeek/releases/latest), extract it, and place `stripeek.exe` somewhere on your `%PATH%`.
 
 ## Quick start
 
@@ -147,7 +109,7 @@ go test ./...  # run tests
 
 ### Release process
 
-Releases are fully automated via [goreleaser](https://goreleaser.com) and GitHub Actions. Pushing a semver tag to `main` triggers a build for all platforms, a GitHub release with attached archives and checksums, and an update to the Homebrew formula in `progapandist/homebrew-tap`.
+Releases are automated via [goreleaser](https://goreleaser.com) and GitHub Actions. Pushing a semver tag to `main` triggers a build for all platforms and a GitHub release with attached archives and checksums.
 
 **Versioning:** this project uses [Semantic Versioning](https://semver.org). While the major version is `0`, minor bumps (`v0.2.0`, `v0.3.0`) signal new features and patch bumps (`v0.1.1`) signal bug fixes. There are no compatibility guarantees before `v1.0.0`.
 
