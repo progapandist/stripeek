@@ -16,7 +16,7 @@ import (
 )
 
 func main() {
-	addr := "127.0.0.1:4111"
+	addr := "127.0.0.1:4242"
 	if v := os.Getenv("STRIPEEK_ADDR"); v != "" {
 		addr = v
 	}

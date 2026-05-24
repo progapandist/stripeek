@@ -6,7 +6,7 @@ PKG := ./cmd/stripeek
 help:
 	@echo "Targets:"
 	@echo "  build      - compile binary to ./$(BIN)"
-	@echo "  run        - run proxy + TUI (listens on localhost:4111)"
+	@echo "  run        - run proxy + TUI (listens on localhost:4242)"
 	@echo "  fmt        - gofmt -w ."
 	@echo "  vet        - go vet ./..."
 	@echo "  lint       - staticcheck ./..."
