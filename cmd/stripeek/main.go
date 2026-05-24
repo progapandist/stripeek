@@ -15,7 +15,21 @@ import (
 	"github.com/progapandist/stripeek/tui"
 )
 
+// Set by goreleaser via -ldflags.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
+	for _, arg := range os.Args[1:] {
+		if arg == "--version" || arg == "-version" {
+			fmt.Printf("stripeek %s (commit %s, built %s)\n", version, commit, date)
+			os.Exit(0)
+		}
+	}
+
 	addr := "127.0.0.1:4242"
 	if v := os.Getenv("STRIPEEK_ADDR"); v != "" {
 		addr = v
