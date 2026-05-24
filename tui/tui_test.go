@@ -87,15 +87,15 @@ func TestCollapseAllHidesNestedFields(t *testing.T) {
 
 func TestTabTogglesFocus(t *testing.T) {
 	m := drive(New(), tea.WindowSizeMsg{Width: 100, Height: 30})
-	if m.focused != "list" {
+	if m.focused != focusList {
 		t.Fatalf("expected initial focus list, got %q", m.focused)
 	}
 	m = drive(m, key("tab"))
-	if m.focused != "detail" || !m.tree.focused {
+	if m.focused != focusDetail || !m.tree.focused {
 		t.Errorf("tab did not move focus to detail (focused=%q tree.focused=%v)", m.focused, m.tree.focused)
 	}
 	m = drive(m, key("tab"))
-	if m.focused != "list" {
+	if m.focused != focusList {
 		t.Errorf("second tab did not return focus to list, got %q", m.focused)
 	}
 }
@@ -126,7 +126,7 @@ func TestEnterInspectsSelectedRequestAndEscReturnsToList(t *testing.T) {
 		NewCallMsg(sampleCall()),
 	)
 	m = drive(m, key("enter"))
-	if m.focused != "detail" || !m.tree.focused {
+	if m.focused != focusDetail || !m.tree.focused {
 		t.Fatalf("enter did not inspect request (focused=%q tree.focused=%v)", m.focused, m.tree.focused)
 	}
 	if !m.hasSel {
@@ -134,7 +134,7 @@ func TestEnterInspectsSelectedRequestAndEscReturnsToList(t *testing.T) {
 	}
 
 	m = drive(m, key("esc"))
-	if m.focused != "list" || m.tree.focused {
+	if m.focused != focusList || m.tree.focused {
 		t.Fatalf("esc did not return to list (focused=%q tree.focused=%v)", m.focused, m.tree.focused)
 	}
 	if !m.hasSel {
@@ -192,7 +192,7 @@ func TestInspectorKeyFilterScopedToSection(t *testing.T) {
 		t.Fatalf("enter should apply filter without clearing (typing=%v on=%v)", m.tree.typing, m.tree.filterOn)
 	}
 	m = drive(m, key("esc"))
-	if m.tree.filterOn || m.focused != "detail" {
+	if m.tree.filterOn || m.focused != focusDetail {
 		t.Fatalf("esc did not clear filter cleanly (on=%v focused=%q)", m.tree.filterOn, m.focused)
 	}
 	if !strings.Contains(m.View(), "beta") {
@@ -374,7 +374,7 @@ func TestGroupNavigatorFiltersCallsByGroup(t *testing.T) {
 		key("tab"),  // focus group navigator
 		key("down"), // newest group: second
 	)
-	if m.focused != "groups" {
+	if m.focused != focusGroups {
 		t.Fatalf("focused = %q, want groups", m.focused)
 	}
 	view := m.View()
