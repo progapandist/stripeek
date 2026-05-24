@@ -54,6 +54,7 @@ type Model struct {
 	groupCursor   int
 	groupFilterID string
 	groups        []groupEntry
+	shortcuts     bool
 }
 
 func New() Model {
@@ -110,20 +111,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
+		case "?", "esc":
+			if m.shortcuts {
+				m.shortcuts = false
+				return m, nil
+			}
 		case "q":
 			if !m.inputActive() {
 				return m, tea.Quit
 			}
 		}
-		if (msg.String() == "ctrl+g" || msg.String() == "cmd+g") && !m.inputActive() {
-			m.startGroup()
-			m.tree.focused = m.focused == focusDetail
+		if msg.String() == "?" && !m.inputActive() {
+			m.shortcuts = true
 			return m, nil
 		}
-
 		// Tab always switches panes/sections, cancelling any in-progress text input.
 		if msg.String() == "tab" || msg.String() == "shift+tab" {
 			m.advanceFocus(msg.String() == "shift+tab")
+			m.tree.focused = m.focused == focusDetail
+			return m, nil
+		}
+		if m.shortcuts {
+			return m, nil
+		}
+		if (msg.String() == "ctrl+g" || msg.String() == "cmd+g") && !m.inputActive() {
+			m.startGroup()
 			m.tree.focused = m.focused == focusDetail
 			return m, nil
 		}
@@ -210,4 +222,5 @@ func (m *Model) syncTree() {
 	m.selected = sel.call
 	m.hasSel = true
 	m.tree.setCall(sel.call)
+	m.layout()
 }

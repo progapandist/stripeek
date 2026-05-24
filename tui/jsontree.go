@@ -194,24 +194,32 @@ func (t *jsonTree) Update(msg tea.Msg) {
 		t.setAll(true)
 	case "-", "_":
 		t.setAll(false)
-	case "g", "home":
+	case "t", "home":
 		t.cursor = t.skipSepForward(0)
 		t.clampOffset()
-	case "G", "end":
+	case "b", "end":
 		t.cursor = t.skipSepBackward(len(t.visible) - 1)
 		t.clampOffset()
-	case "pgdown", "ctrl+d":
-		t.move(t.pageStep())
-	case "pgup", "ctrl+u":
-		t.move(-t.pageStep())
+	case "pgdown", "ctrl+f":
+		t.move(t.fullPageStep())
+	case "pgup", "ctrl+b":
+		t.move(-t.fullPageStep())
+	case "ctrl+d":
+		t.move(t.halfPageStep())
+	case "ctrl+u":
+		t.move(-t.halfPageStep())
 	}
 }
 
-func (t *jsonTree) pageStep() int {
+func (t *jsonTree) halfPageStep() int {
 	if t.height <= 1 {
 		return 1
 	}
 	return t.height / 2
+}
+
+func (t *jsonTree) fullPageStep() int {
+	return max(1, t.height-1)
 }
 
 func (t *jsonTree) move(d int) {

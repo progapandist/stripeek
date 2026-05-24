@@ -11,6 +11,7 @@ type geom struct {
 	bodyN         int // body rows inside each pane (identical for both)
 	listH         int // rows available to the call list
 	groupH        int // rows available to the group navigator
+	detailH       int // rows used by the inspector request summary
 	treeH         int // rows available to the inspector tree
 }
 
@@ -22,13 +23,18 @@ func (m Model) geometry() geom {
 	g.rightCW = max(1, g.rightW-4)
 	g.bodyN = max(1, m.height-3) // footer(1) + top+bottom border(2)
 	if m.groupsVisible {
-		available := max(1, g.bodyN-4) // filter + count + rule + group header
+		available := max(1, g.bodyN-5) // filter + count + rule + spacer + group header
 		g.groupH = max(1, available/2)
 		g.listH = max(1, available-g.groupH)
 	} else {
 		g.listH = max(1, g.bodyN-3) // filter + count + rule
 	}
-	g.treeH = max(1, g.bodyN-4) // header + spacer + rule/filter + spacer
+	g.detailH = len(m.detailHeaderLines(g.rightCW))
+	treeChromeH := 1 // spacer between request summary and tree
+	if m.tree.typing || m.tree.filterOn {
+		treeChromeH = 3 // spacer + filter bar + spacer
+	}
+	g.treeH = max(1, g.bodyN-g.detailH-treeChromeH)
 	return g
 }
 

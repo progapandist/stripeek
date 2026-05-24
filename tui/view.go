@@ -19,19 +19,15 @@ func (m Model) View() string {
 	}
 	leftBody = append(leftBody, toLines(m.list.View(), g.listH)...)
 	if m.groupsVisible {
+		leftBody = append(leftBody, "")
 		leftBody = append(leftBody, m.groupHeader(g.leftCW))
 		leftBody = append(leftBody, m.groupLines(g.leftCW, g.groupH)...)
 	}
 
-	rightSubhead := rule(g.rightCW)
+	rightBody := append([]string{}, m.detailHeaderLines(g.rightCW)...)
+	rightBody = append(rightBody, "")
 	if m.tree.typing || m.tree.filterOn {
-		rightSubhead = m.inspectorFilterBar()
-	}
-	rightBody := []string{
-		m.detailHeader(),
-		"",
-		rightSubhead,
-		"",
+		rightBody = append(rightBody, m.inspectorFilterBar(), "")
 	}
 	rightBody = append(rightBody, toLines(m.tree.View(), g.treeH)...)
 
@@ -44,6 +40,9 @@ func (m Model) View() string {
 	right := frame("Inspector", rightBody, g.rightCW, m.focused == focusDetail)
 
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, " ", right)
+	if m.shortcuts {
+		body = lipgloss.Place(m.width, max(1, m.height-1), lipgloss.Center, lipgloss.Center, m.shortcutsOverlay())
+	}
 	return lipgloss.JoinVertical(lipgloss.Left, body, m.helpBar())
 }
 
@@ -147,9 +146,8 @@ func (m Model) helpBar() string {
 			{"↑↓", "move"},
 			{"enter", "inspect"},
 			{"/", "filter"},
-			{"ctrl+g", "new group"},
-			{"g", "groups"},
 			{"tab", "switch"},
+			{"?", "shortcuts"},
 			{"q", "quit"},
 		}
 	case m.focused == focusGroups:
@@ -157,9 +155,8 @@ func (m Model) helpBar() string {
 			{"↑↓", "group"},
 			{"enter", "calls"},
 			{"esc", "all"},
-			{"ctrl+g", "new group"},
-			{"g", "hide"},
 			{"tab", "switch"},
+			{"?", "shortcuts"},
 		}
 	case m.focused == focusDetail && m.tree.typing:
 		pairs = [][2]string{
@@ -173,9 +170,9 @@ func (m Model) helpBar() string {
 		pairs = [][2]string{
 			{"↑↓", "move"},
 			{"←→", "fold"},
-			{"space", "toggle"},
+			{"pgup/dn", "page"},
 			{"/", "filter keys"},
-			{"+/−", "expand/collapse"},
+			{"?", "shortcuts"},
 			{"esc", "back"},
 		}
 	}
@@ -187,6 +184,134 @@ func (m Model) helpBar() string {
 	sep := styleFaint.Render("   ")
 	bar := " " + joinWith(parts, sep)
 	return lipgloss.NewStyle().Width(m.width).MaxWidth(m.width).Render(bar)
+}
+
+func (m Model) shortcutsOverlay() string {
+	width := min(96, max(36, m.width-8))
+	contentW := max(1, width-4)
+
+	if contentW >= 64 {
+		gap := 3
+		colW := (contentW - gap) / 2
+		left := []string{}
+		for _, section := range []shortcutSection{globalShortcuts(), callsShortcuts(), groupsShortcuts()} {
+			if len(left) > 0 {
+				left = append(left, "")
+			}
+			left = append(left, renderShortcutSection(section, colW)...)
+		}
+		right := renderShortcutSection(inspectorShortcuts(), colW)
+		lines := make([]string, max(len(left), len(right)))
+		for i := range lines {
+			l := ""
+			if i < len(left) {
+				l = left[i]
+			}
+			r := ""
+			if i < len(right) {
+				r = right[i]
+			}
+			lines[i] = fitLine(fitLine(l, colW)+strings.Repeat(" ", gap)+fitLine(r, colW), contentW)
+		}
+		return frame("Shortcuts", lines, contentW, true)
+	}
+
+	lines := []string{}
+	for _, section := range m.shortcutSections() {
+		if len(lines) > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, styleSectionHeader.Render(section.title))
+		for _, p := range section.pairs {
+			key := styleHelpKey.Width(16).Render(p[0])
+			lines = append(lines, fitLine(key+styleHelp.Render(p[1]), contentW))
+		}
+	}
+	return frame("Shortcuts", lines, contentW, true)
+}
+
+func renderShortcutSection(section shortcutSection, width int) []string {
+	lines := []string{styleSectionHeader.Render(section.title)}
+	for _, p := range section.pairs {
+		key := styleHelpKey.Width(14).Render(p[0])
+		lines = append(lines, fitLine(key+styleHelp.Render(p[1]), width))
+	}
+	return lines
+}
+
+type shortcutSection struct {
+	title string
+	pairs [][2]string
+}
+
+func (m Model) shortcutSections() []shortcutSection {
+	return []shortcutSection{
+		globalShortcuts(),
+		callsShortcuts(),
+		inspectorShortcuts(),
+		groupsShortcuts(),
+	}
+}
+
+func globalShortcuts() shortcutSection {
+	return shortcutSection{
+		title: "Global",
+		pairs: [][2]string{
+			{"tab", "switch panes"},
+			{"shift+tab", "switch back"},
+			{"?", "open/close shortcuts"},
+			{"q", "quit"},
+			{"ctrl+c", "quit now"},
+		},
+	}
+}
+
+func callsShortcuts() shortcutSection {
+	return shortcutSection{
+		title: "Calls",
+		pairs: [][2]string{
+			{"↑↓ / j k", "move one request"},
+			{"pgup/pgdn", "move one page"},
+			{"ctrl+b/f", "move one page"},
+			{"ctrl+u/d", "move half page"},
+			{"home/end", "jump top/bottom"},
+			{"t / b", "jump top/bottom"},
+			{"enter", "inspect selected"},
+			{"/ / esc", "filter / clear filter"},
+			{"g / ctrl+g", "groups / new group"},
+		},
+	}
+}
+
+func inspectorShortcuts() shortcutSection {
+	return shortcutSection{
+		title: "Inspector",
+		pairs: [][2]string{
+			{"↑↓ / j k", "move one row"},
+			{"pgup/pgdn", "move one page"},
+			{"ctrl+b/f", "move one page"},
+			{"ctrl+u/d", "move half page"},
+			{"home/end", "jump top/bottom"},
+			{"t / b", "jump top/bottom"},
+			{"←→ / h l", "fold / enter"},
+			{"space/enter", "toggle container"},
+			{"+ / -", "expand / collapse all"},
+			{"/ / esc", "filter keys / back"},
+		},
+	}
+}
+
+func groupsShortcuts() shortcutSection {
+	return shortcutSection{
+		title: "Groups",
+		pairs: [][2]string{
+			{"↑↓ / j k", "move group"},
+			{"enter", "show group calls"},
+			{"esc", "show all requests"},
+			{"g", "hide groups"},
+			{"ctrl+g", "start new group"},
+		},
+	}
 }
 
 func joinWith(parts []string, sep string) string {

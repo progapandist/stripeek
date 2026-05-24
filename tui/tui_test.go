@@ -45,6 +45,18 @@ func key(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyEsc}
 	case "ctrl+g":
 		return tea.KeyMsg{Type: tea.KeyCtrlG}
+	case "ctrl+d":
+		return tea.KeyMsg{Type: tea.KeyCtrlD}
+	case "ctrl+f":
+		return tea.KeyMsg{Type: tea.KeyCtrlF}
+	case "ctrl+u":
+		return tea.KeyMsg{Type: tea.KeyCtrlU}
+	case "ctrl+b":
+		return tea.KeyMsg{Type: tea.KeyCtrlB}
+	case "pgdown":
+		return tea.KeyMsg{Type: tea.KeyPgDown}
+	case "pgup":
+		return tea.KeyMsg{Type: tea.KeyPgUp}
 	case "up":
 		return tea.KeyMsg{Type: tea.KeyUp}
 	case "down":
@@ -120,6 +132,30 @@ func TestPaneTitleMarksFocusedPane(t *testing.T) {
 	}
 }
 
+func TestShortcutOverlayShowsUnifiedSections(t *testing.T) {
+	m := drive(New(), tea.WindowSizeMsg{Width: 100, Height: 30}, key("?"))
+	if !m.shortcuts {
+		t.Fatal("? did not open shortcuts")
+	}
+	view := m.View()
+	for _, want := range []string{"SHORTCUTS", "Global", "Calls", "Inspector", "Groups", "ctrl+b/f", "ctrl+u/d"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("unified shortcuts overlay missing %q:\n%s", want, view)
+		}
+	}
+
+	before := m.shortcutsOverlay()
+	m = drive(m, key("tab"))
+	if got := m.shortcutsOverlay(); got != before {
+		t.Fatalf("shortcuts overlay changed across panes")
+	}
+
+	m = drive(m, key("?"))
+	if m.shortcuts {
+		t.Fatal("? did not close shortcuts")
+	}
+}
+
 func TestEnterInspectsSelectedRequestAndEscReturnsToList(t *testing.T) {
 	m := drive(New(),
 		tea.WindowSizeMsg{Width: 100, Height: 30},
@@ -139,6 +175,67 @@ func TestEnterInspectsSelectedRequestAndEscReturnsToList(t *testing.T) {
 	}
 	if !m.hasSel {
 		t.Fatal("esc lost selected request")
+	}
+}
+
+func TestInspectorHeaderWrapsRequestURLAndGroupName(t *testing.T) {
+	longPath := "/v1/invoices?customer=cus_UZpoNO8y6Xj9Sq&subscription=sub_1Tag8rB3ZHLBhbGBjTeVAroS&expand[]=data.customer"
+	longGroup := "Group invoices subscription replay with unusually long descriptive name"
+	c := sampleCall()
+	c.Method = "GET"
+	c.Path = longPath
+	c.RequestURI = longPath
+	c.Group = &proxy.Group{
+		ID:       "group-long",
+		Name:     longGroup,
+		Color:    "Teal",
+		LightHex: "#0f766e",
+		DarkHex:  "#5eead4",
+	}
+
+	m := drive(New(),
+		tea.WindowSizeMsg{Width: 84, Height: 32},
+		NewCallMsg(c),
+	)
+	view := m.View()
+	for _, want := range []string{
+		"expand[]=data.customer",
+		"invoices subscription replay",
+		"descriptive",
+		"name",
+		"REQUEST",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("wrapped inspector header missing %q:\n%s", want, view)
+		}
+	}
+	if got := len(m.detailHeaderLines(m.geometry().rightCW)); got < 4 {
+		t.Fatalf("header used %d lines, want wrapped URL and group", got)
+	}
+	if m.tree.height != m.geometry().treeH {
+		t.Fatalf("tree height = %d, want geometry treeH %d", m.tree.height, m.geometry().treeH)
+	}
+	if !strings.Contains(view, "Group invoices") || strings.Contains(view, "group Group") {
+		t.Fatalf("inspector header did not render the group name directly:\n%s", view)
+	}
+}
+
+func TestInspectorOmitsSubheadRuleWhenKeyFilterInactive(t *testing.T) {
+	m := drive(New(),
+		tea.WindowSizeMsg{Width: 100, Height: 30},
+		NewCallMsg(sampleCall()),
+	)
+	view := m.View()
+	g := m.geometry()
+	wantTreeH := g.bodyN - len(m.detailHeaderLines(g.rightCW)) - 1
+	if m.tree.height != wantTreeH {
+		t.Fatalf("tree height = %d, want %d without inactive divider:\n%s", m.tree.height, wantTreeH, view)
+	}
+
+	m = drive(m, key("enter"), key("/"))
+	view = m.View()
+	if !strings.Contains(view, "filter request keys") {
+		t.Fatalf("active key filter bar missing:\n%s", view)
 	}
 }
 
@@ -191,6 +288,43 @@ func TestNewCallsPreserveManualOlderSelection(t *testing.T) {
 	}
 	if selected.call.Path != "/v1/first" {
 		t.Fatalf("selected %q, want manually selected older call", selected.call.Path)
+	}
+}
+
+func TestCallListUsesInspectorNavigationKeys(t *testing.T) {
+	m := drive(NewWithMaxCalls(30), tea.WindowSizeMsg{Width: 100, Height: 30})
+	for i := range 20 {
+		c := sampleCall()
+		c.Path = fmt.Sprintf("/v1/item_%02d", i)
+		c.RequestURI = c.Path
+		m = drive(m, NewCallMsg(c))
+	}
+	full := m.listFullPageStep()
+	half := m.listHalfPageStep()
+
+	m = drive(m, key("pgdown"))
+	if got := m.list.Index(); got != full {
+		t.Fatalf("pgdown selected index %d, want %d", got, full)
+	}
+	m = drive(m, key("ctrl+u"))
+	if got, want := m.list.Index(), full-half; got != want {
+		t.Fatalf("ctrl+u selected index %d, want %d", got, want)
+	}
+	m = drive(m, key("b"))
+	if got, want := m.list.Index(), len(m.list.Items())-1; got != want {
+		t.Fatalf("b selected index %d, want bottom %d", got, want)
+	}
+	m = drive(m, key("t"))
+	if got := m.list.Index(); got != 0 {
+		t.Fatalf("t selected index %d, want top", got)
+	}
+	m = drive(m, key("ctrl+f"))
+	if got := m.list.Index(); got != full {
+		t.Fatalf("ctrl+f selected index %d, want %d", got, full)
+	}
+	m = drive(m, key("ctrl+b"))
+	if got := m.list.Index(); got != 0 {
+		t.Fatalf("ctrl+b selected index %d, want top", got)
 	}
 }
 
@@ -252,7 +386,7 @@ func TestInspectorKeyFilterScopedToSection(t *testing.T) {
 	}
 
 	// With the cursor moved into the RESPONSE section, the filter scopes there.
-	m = drive(m, key("G"), key("/"))
+	m = drive(m, key("b"), key("/"))
 	if m.tree.filterRoot != 1 {
 		t.Fatalf("filter not scoped to response section (root=%d)", m.tree.filterRoot)
 	}
@@ -334,6 +468,60 @@ func TestInspectorKeepsCursorVisibleBelowWrappedScalar(t *testing.T) {
 	view := tree.View()
 	if !strings.Contains(view, "zz_after") {
 		t.Fatalf("cursor line below wrapped scalar is not visible:\n%s", view)
+	}
+}
+
+func TestInspectorPageKeysUseFullAndHalfSteps(t *testing.T) {
+	body := "{"
+	for i := range 30 {
+		if i > 0 {
+			body += ","
+		}
+		body += fmt.Sprintf("%q:%d", fmt.Sprintf("k%02d", i), i)
+	}
+	body += "}"
+
+	base := jsonTree{width: 40, height: 10, focused: true}
+	base.setCall(proxy.Call{ReqBody: []byte("{}"), RespBody: []byte(body)})
+	base.cursor = 3 // response root
+
+	full := base
+	full.Update(key("pgdown"))
+	if got, want := full.cursor-base.cursor, 9; got != want {
+		t.Fatalf("pgdown moved %d nodes, want %d", got, want)
+	}
+
+	ctrlF := base
+	ctrlF.Update(key("ctrl+f"))
+	if got, want := ctrlF.cursor-base.cursor, 9; got != want {
+		t.Fatalf("ctrl+f moved %d nodes, want %d", got, want)
+	}
+
+	half := base
+	half.Update(key("ctrl+d"))
+	if got, want := half.cursor-base.cursor, 5; got != want {
+		t.Fatalf("ctrl+d moved %d nodes, want %d", got, want)
+	}
+}
+
+func TestInspectorTopBottomKeysAvoidGroupToggle(t *testing.T) {
+	tree := jsonTree{width: 40, height: 10, focused: true}
+	tree.setCall(proxy.Call{
+		ReqBody:  []byte("{}"),
+		RespBody: []byte(`{"alpha":1,"bravo":2,"charlie":3}`),
+	})
+	tree.cursor = 3
+	tree.Update(key("g"))
+	if tree.cursor != 3 {
+		t.Fatalf("g moved inspector cursor to %d, want unchanged", tree.cursor)
+	}
+	tree.Update(key("b"))
+	if tree.cursor != len(tree.visible)-1 {
+		t.Fatalf("b moved cursor to %d, want bottom %d", tree.cursor, len(tree.visible)-1)
+	}
+	tree.Update(key("t"))
+	if tree.cursor != 0 {
+		t.Fatalf("t moved cursor to %d, want top", tree.cursor)
 	}
 }
 
