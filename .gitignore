@@ -20,3 +20,6 @@ vendor/
 
 # Claude
 .claude/
+
+#Ruby
+.ruby-lsp/
