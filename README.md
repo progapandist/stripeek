@@ -7,6 +7,12 @@ stripeek runs as a reverse proxy between your application and `api.stripe.com`. 
 > **For local development only.**  
 > Redirecting your SDK's base URL to stripeek means your app routes all Stripe traffic through the proxy. If stripeek isn't running, every Stripe API call will fail. Never commit these changes or deploy them to staging or production — keep them in local dev overrides (environment-specific initializers, `.env.development`, or a dev-only boot file).
 
+<img width="1679" height="1014" alt="image" src="https://github.com/user-attachments/assets/b8071094-0983-43e0-81de-10a37a12196a" />
+
+With request groups and filtering: 
+<img width="1589" height="874" alt="image" src="https://github.com/user-attachments/assets/2d989c3d-d952-4cc3-8c51-3e5ebc38e4be" />
+
+
 ## Installation
 
 ```bash
