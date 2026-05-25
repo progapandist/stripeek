@@ -130,6 +130,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "tab" || msg.String() == "shift+tab" {
 			m.advanceFocus(msg.String() == "shift+tab")
 			m.tree.focused = m.focused == focusDetail
+			m.layout()
 			return m, nil
 		}
 		if m.shortcuts {
@@ -159,6 +160,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateGroups(msg)
 		default:
 			m.tree.Update(msg)
+			m.layout()
 		}
 		return m, cmd
 

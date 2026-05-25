@@ -5,26 +5,20 @@ import "strings"
 // noMatchNode is the placeholder shown when a section has no matching keys.
 var noMatchNode = &jsonNode{kind: kindScalar, value: "(no matches)", plainValue: "(no matches)", scalarColor: colFaint, dim: true}
 
-// fuzzyMatch reports whether query's characters appear in key in order
-// (case-insensitive subsequence). An empty query matches everything.
+// fuzzyMatch reports whether query appears contiguously in key
+// (case-insensitive). An empty query matches everything.
 func fuzzyMatch(key, query string) bool {
 	if query == "" {
 		return true
 	}
 	k := strings.ToLower(key)
 	q := strings.ToLower(query)
-	qi := 0
-	for i := 0; i < len(k) && qi < len(q); i++ {
-		if k[i] == q[qi] {
-			qi++
-		}
-	}
-	return qi == len(q)
+	return strings.Contains(k, q)
 }
 
 // walkFilteredRoot renders a section the same way as walkNode (honoring every
 // node's expanded flag, so fold / toggle / expand-all all work) but hides keys
-// that neither match the fuzzy filter nor lead to a match. A matched container
+// that neither match the key filter nor lead to a match. A matched container
 // reveals all of its descendants (subject to their own fold state).
 func (t *jsonTree) walkFilteredRoot(root *jsonNode) {
 	t.matchCache = map[*jsonNode]bool{}
@@ -86,25 +80,28 @@ func (t *jsonTree) cursorRoot() int {
 	return 0
 }
 
-// firstFilteredLine is the first key line inside the filtered section, so the
-// cursor lands on a match as the filter narrows.
+// firstFilteredLine is the first real key match across the filtered payload, so
+// the cursor lands on a useful match as the filter narrows.
 func (t *jsonTree) firstFilteredLine() int {
+	fallback := -1
 	for i, vl := range t.visible {
-		if vl.isSep || vl.node == nil {
+		if vl.isSep || vl.node == nil || vl.node == noMatchNode {
 			continue
 		}
-		if vl.depth == 0 && t.filterRoot < len(t.roots) && t.roots[t.filterRoot] == vl.node {
-			if i+1 < len(t.visible) && !t.visible[i+1].isSep {
-				return i + 1
-			}
+		if fallback < 0 {
+			fallback = i
+		}
+		if t.filter != "" && vl.depth > 0 && fuzzyMatch(vl.node.key, t.filter) {
 			return i
 		}
+	}
+	if fallback >= 0 {
+		return fallback
 	}
 	return t.skipSepForward(0)
 }
 
 func (t *jsonTree) startFilter() {
-	t.filterRoot = t.cursorRoot()
 	t.typing = true
 	t.filterOn = true
 	t.filter = ""
@@ -121,8 +118,23 @@ func (t *jsonTree) setFilter(q string) {
 }
 
 func (t *jsonTree) clearFilter() {
+	selected := t.current()
 	t.typing = false
 	t.filterOn = false
 	t.filter = ""
 	t.rebuild()
+	if selected != nil && selected != noMatchNode {
+		t.selectNode(selected)
+	}
+}
+
+func (t *jsonTree) selectNode(target *jsonNode) bool {
+	for i, vl := range t.visible {
+		if !vl.isSep && vl.node == target {
+			t.cursor = i
+			t.clampOffset()
+			return true
+		}
+	}
+	return false
 }

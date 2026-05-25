@@ -57,7 +57,10 @@ var (
 	styleHelp        = lipgloss.NewStyle().Foreground(colDim)
 	styleHelpKey     = lipgloss.NewStyle().Foreground(colAccent)
 	styleFilterText  = lipgloss.NewStyle().Foreground(colAccent)
+	stylePath        = lipgloss.NewStyle().Foreground(colAccentSoft)
 	styleAccentBlock = lipgloss.NewStyle().Background(colAccent)
+	styleScrollTrack = lipgloss.NewStyle().Foreground(colFaint)
+	styleScrollThumb = lipgloss.NewStyle().Foreground(colAccent)
 )
 
 // Inspector JSON tree.

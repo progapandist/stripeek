@@ -156,6 +156,38 @@ func TestShortcutOverlayShowsUnifiedSections(t *testing.T) {
 	}
 }
 
+func TestFooterShowsGroupShortcutsByContext(t *testing.T) {
+	m := drive(New(),
+		tea.WindowSizeMsg{Width: 160, Height: 36},
+		NewCallMsg(sampleCall()),
+	)
+	view := m.View()
+	if !strings.Contains(view, "g groups") {
+		t.Fatalf("calls footer missing group toggle shortcut:\n%s", view)
+	}
+
+	m = drive(m, key("ctrl+g"), key("tab"))
+	if m.focused != focusGroups {
+		t.Fatalf("test setup focused %q, want groups", m.focused)
+	}
+	view = m.View()
+	if !strings.Contains(view, "ctrl+g new group") {
+		t.Fatalf("groups footer missing create-group shortcut:\n%s", view)
+	}
+}
+
+func TestInspectorHelpSurfacesExpandCollapseAll(t *testing.T) {
+	m := drive(New(),
+		tea.WindowSizeMsg{Width: 100, Height: 30},
+		NewCallMsg(sampleCall()),
+		key("enter"),
+	)
+	view := m.View()
+	if !strings.Contains(view, "+/-") || !strings.Contains(view, "all") {
+		t.Fatalf("inspector help did not surface expand/collapse all:\n%s", view)
+	}
+}
+
 func TestEnterInspectsSelectedRequestAndEscReturnsToList(t *testing.T) {
 	m := drive(New(),
 		tea.WindowSizeMsg{Width: 100, Height: 30},
@@ -227,14 +259,14 @@ func TestInspectorOmitsSubheadRuleWhenKeyFilterInactive(t *testing.T) {
 	)
 	view := m.View()
 	g := m.geometry()
-	wantTreeH := g.bodyN - len(m.detailHeaderLines(g.rightCW)) - 1
+	wantTreeH := g.bodyN - len(m.detailHeaderLines(g.rightCW)) - 2
 	if m.tree.height != wantTreeH {
 		t.Fatalf("tree height = %d, want %d without inactive divider:\n%s", m.tree.height, wantTreeH, view)
 	}
 
 	m = drive(m, key("enter"), key("/"))
 	view = m.View()
-	if !strings.Contains(view, "filter request keys") {
+	if !strings.Contains(view, "filter keys") {
 		t.Fatalf("active key filter bar missing:\n%s", view)
 	}
 }
@@ -328,8 +360,8 @@ func TestCallListUsesInspectorNavigationKeys(t *testing.T) {
 	}
 }
 
-// filterCall has disjoint request/response key names so a section-scoped
-// filter's effect can be asserted unambiguously.
+// filterCall has disjoint request/response key names so whole-payload filtering
+// can be asserted unambiguously.
 func filterCall() proxy.Call {
 	return proxy.Call{
 		Time:       time.Now(),
@@ -342,21 +374,19 @@ func filterCall() proxy.Call {
 	}
 }
 
-func TestInspectorKeyFilterScopedToSection(t *testing.T) {
+func TestInspectorKeyFilterMatchesRequestAndResponse(t *testing.T) {
 	m := drive(New(),
 		tea.WindowSizeMsg{Width: 100, Height: 40},
 		NewCallMsg(filterCall()),
 		key("enter"), // inspect, focus the tree (cursor in the REQUEST section)
 	)
 
-	// "/" starts a filter scoped to the cursor's section (request here).
 	m = drive(m, key("/"))
-	if !m.tree.typing || !m.tree.filterOn || m.tree.filterRoot != 0 {
-		t.Fatalf("/ did not start a request-scoped filter (typing=%v on=%v root=%d)",
-			m.tree.typing, m.tree.filterOn, m.tree.filterRoot)
+	if !m.tree.typing || !m.tree.filterOn {
+		t.Fatalf("/ did not start a key filter (typing=%v on=%v)", m.tree.typing, m.tree.filterOn)
 	}
 
-	m = drive(m, key("a"), key("l")) // "al" fuzzy-matches "alpha" only
+	m = drive(m, key("a"), key("l")) // "al" matches "alpha" only
 	view := m.View()
 	if !strings.Contains(view, "alpha") || !strings.Contains(view, "nested") {
 		t.Fatalf("matched key/subtree hidden by filter:\n%s", view)
@@ -367,9 +397,8 @@ func TestInspectorKeyFilterScopedToSection(t *testing.T) {
 	if strings.Contains(view, "beta") {
 		t.Fatalf("non-matching request key not hidden:\n%s", view)
 	}
-	// The other section is never filtered — it renders in full.
-	if !strings.Contains(view, "zulu") || !strings.Contains(view, "yankee") {
-		t.Fatalf("inactive (response) section should render fully:\n%s", view)
+	if strings.Contains(view, "zulu") || strings.Contains(view, "yankee") {
+		t.Fatalf("non-matching response keys should also be hidden:\n%s", view)
 	}
 
 	// enter applies (stops typing, keeps the filter); esc then clears it.
@@ -381,21 +410,65 @@ func TestInspectorKeyFilterScopedToSection(t *testing.T) {
 	if m.tree.filterOn || m.focused != focusDetail {
 		t.Fatalf("esc did not clear filter cleanly (on=%v focused=%q)", m.tree.filterOn, m.focused)
 	}
-	if !strings.Contains(m.View(), "beta") {
-		t.Fatalf("clearing the filter did not restore hidden keys:\n%s", m.View())
+	view = m.View()
+	if !strings.Contains(view, "beta") || !strings.Contains(view, "zulu") || !strings.Contains(view, "yankee") {
+		t.Fatalf("clearing the filter did not restore hidden keys:\n%s", view)
 	}
 
-	// With the cursor moved into the RESPONSE section, the filter scopes there.
-	m = drive(m, key("b"), key("/"))
-	if m.tree.filterRoot != 1 {
-		t.Fatalf("filter not scoped to response section (root=%d)", m.tree.filterRoot)
-	}
-	m = drive(m, key("z"), key("u")) // "zu" -> zulu (response)
+	// Starting a filter from the request section still searches response keys.
+	m = drive(m, key("t"), key("/"), key("z"), key("u")) // "zu" -> zulu (response)
 	if curKey(m) != "zulu" {
-		t.Fatalf("response filter did not select \"zulu\", got %q", curKey(m))
+		t.Fatalf("whole-payload filter did not select response \"zulu\", got %q", curKey(m))
 	}
-	if !strings.Contains(m.View(), "alpha") {
-		t.Fatalf("request section should stay fully visible during a response filter:\n%s", m.View())
+	if strings.Contains(m.View(), "alpha") {
+		t.Fatalf("non-matching request keys should be hidden during a response match:\n%s", m.View())
+	}
+}
+
+func TestInspectorKeyFilterRequiresContiguousMatch(t *testing.T) {
+	if !fuzzyMatch("end_date", "end") {
+		t.Fatal("end should match end_date")
+	}
+	if !fuzzyMatch("period_end", "end") {
+		t.Fatal("end should match period_end")
+	}
+	if fuzzyMatch("collection_method", "end") {
+		t.Fatal("end should not match collection_method as a non-contiguous subsequence")
+	}
+}
+
+func TestInspectorClearFilterKeepsSelectedNestedKey(t *testing.T) {
+	m := drive(New(),
+		tea.WindowSizeMsg{Width: 110, Height: 34},
+		NewCallMsg(proxy.Call{
+			Time:       time.Now(),
+			Method:     "GET",
+			Path:       "/v1/subscription_schedules",
+			RequestURI: "/v1/subscription_schedules",
+			Status:     200,
+			RespBody:   []byte(`{"phases":[{"items":[{"price":{"recurring":{"trial_period_days":14}},"end_date":1780265457}]}],"collection_method":"charge_automatically"}`),
+		}),
+		key("enter"),
+		key("b"),
+		key("/"), key("t"), key("r"), key("i"), key("a"), key("l"), key("enter"),
+	)
+	for moves := 0; curKey(m) != "trial_period_days" && moves < 20; moves++ {
+		m = drive(m, key("down"))
+	}
+	if curKey(m) != "trial_period_days" {
+		t.Fatalf("filter did not select nested trial_period_days, got %q", curKey(m))
+	}
+	pathBefore := m.tree.currentPath()
+
+	m = drive(m, key("esc"))
+	if m.tree.filterOn || m.tree.typing {
+		t.Fatalf("esc did not clear filter (on=%v typing=%v)", m.tree.filterOn, m.tree.typing)
+	}
+	if got := curKey(m); got != "trial_period_days" {
+		t.Fatalf("clearing filter selected %q, want trial_period_days", got)
+	}
+	if got := m.tree.currentPath(); got != pathBefore {
+		t.Fatalf("clearing filter changed path from %q to %q", pathBefore, got)
 	}
 }
 
@@ -425,6 +498,130 @@ func TestInspectorFilterPreservesFolding(t *testing.T) {
 	m = drive(m, key("-")) // collapse all
 	if strings.Contains(m.View(), "nested") {
 		t.Fatalf("collapse-all did not work under an active filter:\n%s", m.View())
+	}
+}
+
+func TestInspectorFilterRelayoutKeepsCursorVisible(t *testing.T) {
+	body := "{"
+	for i := range 40 {
+		if i > 0 {
+			body += ","
+		}
+		body += fmt.Sprintf("%q:%d", fmt.Sprintf("end_%02d", i), i)
+	}
+	body += "}"
+
+	m := drive(New(),
+		tea.WindowSizeMsg{Width: 100, Height: 16},
+		NewCallMsg(proxy.Call{
+			Time:       time.Now(),
+			Method:     "GET",
+			Path:       "/v1/large",
+			RequestURI: "/v1/large",
+			Status:     200,
+			RespBody:   []byte(body),
+		}),
+		key("enter"),
+		key("b"),
+		key("/"), key("e"), key("n"), key("d"), key("enter"),
+	)
+	if m.tree.height != m.geometry().treeH {
+		t.Fatalf("tree height = %d, want relayout height %d", m.tree.height, m.geometry().treeH)
+	}
+
+	for range 25 {
+		m = drive(m, key("down"))
+	}
+	current := curKey(m)
+	if current == "" || !strings.Contains(m.View(), current) {
+		t.Fatalf("selected filtered key %q is not visible after scrolling:\n%s", current, m.View())
+	}
+}
+
+func TestInspectorShowsCurrentJSONPath(t *testing.T) {
+	m := drive(New(),
+		tea.WindowSizeMsg{Width: 110, Height: 32},
+		NewCallMsg(proxy.Call{
+			Time:       time.Now(),
+			Method:     "GET",
+			Path:       "/v1/path",
+			RequestURI: "/v1/path",
+			Status:     200,
+			RespBody:   []byte(`{"plan":{"metadata":{"nickname":"Pro"}}}`),
+		}),
+		key("enter"),
+		key("b"),
+	)
+	for moves := 0; curKey(m) != "nickname" && moves < 20; moves++ {
+		m = drive(m, key("down"))
+	}
+	if curKey(m) != "nickname" {
+		t.Fatalf("test setup did not reach nickname, got %q", curKey(m))
+	}
+	view := m.View()
+	if !strings.Contains(view, "path response.plan.metadata.nickname") {
+		t.Fatalf("inspector did not show current JSON path:\n%s", view)
+	}
+}
+
+func TestPanesShowScrollIndicators(t *testing.T) {
+	body := "{"
+	for i := range 30 {
+		if i > 0 {
+			body += ","
+		}
+		body += fmt.Sprintf("%q:%d", fmt.Sprintf("k%02d", i), i)
+	}
+	body += "}"
+
+	m := drive(NewWithMaxCalls(40), tea.WindowSizeMsg{Width: 110, Height: 18})
+	for i := range 20 {
+		c := sampleCall()
+		c.Path = fmt.Sprintf("/v1/item_%02d", i)
+		c.RequestURI = c.Path
+		if i == 19 {
+			c.RespBody = []byte(body)
+		}
+		m = drive(m, NewCallMsg(c))
+	}
+
+	view := m.View()
+	if strings.Contains(view, "CALLS ↓") || strings.Contains(view, "Inspector ↓") {
+		t.Fatalf("pane titles should not carry scroll indicators:\n%s", view)
+	}
+	if !strings.Contains(view, "1/20 ↓") {
+		t.Fatalf("calls pane missing readable pagination:\n%s", view)
+	}
+	if !strings.Contains(view, "│") || !strings.Contains(view, "█") {
+		t.Fatalf("inspector pane missing scrollbar track/thumb:\n%s", view)
+	}
+}
+
+func TestCollapseAllFillsViewportFromTopWhenTreeShrinks(t *testing.T) {
+	body := "{"
+	for i := range 30 {
+		if i > 0 {
+			body += ","
+		}
+		body += fmt.Sprintf("%q:{%q:%d}", fmt.Sprintf("group_%02d", i), "nested", i)
+	}
+	body += "}"
+
+	tree := jsonTree{width: 48, height: 12, focused: true}
+	tree.setCall(proxy.Call{ReqBody: []byte("{}"), RespBody: []byte(body)})
+	tree.cursor = tree.skipSepBackward(len(tree.visible) - 1)
+	tree.clampOffset()
+	if tree.offset == 0 {
+		t.Fatal("test setup did not scroll the tree")
+	}
+
+	tree.setAll(false)
+	if tree.offset != 0 {
+		t.Fatalf("collapse-all left offset at %d; want top-filled viewport", tree.offset)
+	}
+	view := tree.View()
+	if !strings.Contains(view, "REQUEST") || !strings.Contains(view, "RESPONSE") {
+		t.Fatalf("collapsed viewport did not show the top-level context:\n%s", view)
 	}
 }
 
@@ -605,6 +802,9 @@ func TestRequestGroupingStartsGroupAndAssignsNewCalls(t *testing.T) {
 	}
 	if strings.Contains(view, "/v1/customers 200  Group Teal") {
 		t.Fatalf("request row should not repeat the group name:\n%s", view)
+	}
+	if strings.Contains(view, "●") {
+		t.Fatalf("request row should use the gutter, not a trailing group dot:\n%s", view)
 	}
 }
 

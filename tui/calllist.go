@@ -26,11 +26,7 @@ func (c callItem) title() string {
 	if c.call.Status >= 400 {
 		status = styleErr.Render(fmt.Sprintf("%d", c.call.Status))
 	}
-	group := ""
-	if c.call.Group != nil {
-		group = "  " + groupStyle(c.call.Group).Render("●")
-	}
-	return fmt.Sprintf("%s %s %s%s", c.call.Method, callDisplayPath(c.call), status, group)
+	return fmt.Sprintf("%s %s %s", c.call.Method, callDisplayPath(c.call), status)
 }
 
 func (c callItem) Description() string { return c.description() }
@@ -249,17 +245,39 @@ func (m Model) filterBar() string {
 func (m Model) callCountLine() string {
 	shown := len(m.list.Items())
 	total := len(m.allCalls)
+	progress := m.callProgressLabel()
 	if m.groupFilterID != "" {
 		label := m.groupLabel(m.groupFilterID)
 		if m.filter != "" {
-			return styleDim.Render(fmt.Sprintf("%d of %d in %s", shown, m.groupCount(m.groupFilterID), label))
+			return styleDim.Render(fmt.Sprintf("%d of %d in %s", shown, m.groupCount(m.groupFilterID), label)) + progress
 		}
-		return styleDim.Render(fmt.Sprintf("%d in %s", shown, label))
+		return styleDim.Render(fmt.Sprintf("%d in %s", shown, label)) + progress
 	}
 	if m.filter != "" {
-		return styleDim.Render(fmt.Sprintf("%d of %d requests", shown, total))
+		return styleDim.Render(fmt.Sprintf("%d of %d requests", shown, total)) + progress
 	}
-	return styleDim.Render(fmt.Sprintf("%d requests", shown))
+	return styleDim.Render(fmt.Sprintf("%d requests", shown)) + progress
+}
+
+func (m Model) callProgressLabel() string {
+	items := len(m.list.Items())
+	if items <= m.visibleListItems() {
+		return ""
+	}
+	index := m.list.Index()
+	if index < 0 {
+		index = 0
+	}
+	if index >= items {
+		index = items - 1
+	}
+	direction := "↓"
+	if index > 0 && index < items-1 {
+		direction = "↑↓"
+	} else if index == items-1 {
+		direction = "↑"
+	}
+	return styleFaint.Render(fmt.Sprintf("   %d/%d %s", index+1, items, direction))
 }
 
 func (m Model) detailHeaderLines(width int) []string {

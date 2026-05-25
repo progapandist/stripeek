@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"strconv"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -15,8 +17,8 @@ const (
 	kindArray
 )
 
-// Node construction lives in jsonbuild.go, fuzzy filtering in jsonfilter.go,
-// and rendering in jsonrender.go. Tree styles live in styles.go.
+// Node construction lives in jsonbuild.go, key filtering in jsonfilter.go, and
+// rendering in jsonrender.go. Tree styles live in styles.go.
 
 // jsonNode is one entry in the collapsible tree.
 type jsonNode struct {
@@ -48,10 +50,9 @@ type jsonTree struct {
 	height  int
 	focused bool
 
-	typing     bool   // true while editing the key filter query
-	filterOn   bool   // true while a key filter is applied to a section
-	filter     string // fuzzy query matched against key names
-	filterRoot int    // index into roots of the filtered section (cursor's section)
+	typing   bool   // true while editing the key filter query
+	filterOn bool   // true while a key filter is applied
+	filter   string // query matched against key names
 
 	matchCache map[*jsonNode]bool // per-rebuild memo: node or a descendant matches
 }
@@ -66,7 +67,6 @@ func (t *jsonTree) setCall(c proxy.Call) {
 	t.typing = false
 	t.filterOn = false
 	t.filter = ""
-	t.filterRoot = 0
 	t.rebuild()
 }
 
@@ -78,7 +78,6 @@ func (t *jsonTree) clear() {
 	t.typing = false
 	t.filterOn = false
 	t.filter = ""
-	t.filterRoot = 0
 }
 
 // rebuild recomputes the flat list of visible lines from the root sections,
@@ -90,7 +89,7 @@ func (t *jsonTree) rebuild() {
 			// Blank separator between REQUEST and RESPONSE sections.
 			t.visible = append(t.visible, &visibleLine{isSep: true})
 		}
-		if t.filterOn && i == t.filterRoot {
+		if t.filterOn {
 			t.walkFilteredRoot(r)
 		} else {
 			t.walkNode(r, 0)
@@ -268,6 +267,9 @@ func (t *jsonTree) clampOffset() {
 		for t.offset < t.cursor && t.rowsBeforeCursor() >= t.height {
 			t.offset++
 		}
+		for t.offset > 0 && t.renderedRowsFromOffset(t.offset) < t.height && t.cursorFitsFrom(t.offset-1) {
+			t.offset--
+		}
 	}
 	if t.offset < 0 {
 		t.offset = 0
@@ -275,8 +277,64 @@ func (t *jsonTree) clampOffset() {
 }
 
 func (t *jsonTree) rowsBeforeCursor() int {
+	return t.rowsBeforeCursorFrom(t.offset)
+}
+
+func (t *jsonTree) rowsBeforeCursorFrom(offset int) int {
 	rows := 0
-	for i := t.offset; i < t.cursor && i < len(t.visible); i++ {
+	for i := offset; i < t.cursor && i < len(t.visible); i++ {
+		rows += t.renderedLineCount(i)
+	}
+	return rows
+}
+
+func (t *jsonTree) cursorFitsFrom(offset int) bool {
+	if t.height <= 0 {
+		return true
+	}
+	return t.rowsBeforeCursorFrom(offset) < t.height
+}
+
+func (t *jsonTree) renderedRowsFromOffset(offset int) int {
+	rows := 0
+	for i := offset; i < len(t.visible); i++ {
+		rows += t.renderedLineCount(i)
+	}
+	return rows
+}
+
+func (t *jsonTree) scrollbarMarks() []string {
+	marks := make([]string, max(0, t.height))
+	for i := range marks {
+		marks[i] = " "
+	}
+	if t.height <= 0 || len(t.visible) == 0 {
+		return marks
+	}
+	total := t.renderedRowsFromOffset(0)
+	if total <= t.height {
+		return marks
+	}
+
+	for i := range marks {
+		marks[i] = styleScrollTrack.Render("│")
+	}
+	thumbSize := max(1, t.height*t.height/total)
+	if thumbSize > t.height {
+		thumbSize = t.height
+	}
+	scrollable := max(1, total-t.height)
+	trackScrollable := max(1, t.height-thumbSize)
+	thumbStart := t.renderedRowsBeforeOffset() * trackScrollable / scrollable
+	for i := thumbStart; i < thumbStart+thumbSize && i < len(marks); i++ {
+		marks[i] = styleScrollThumb.Render("█")
+	}
+	return marks
+}
+
+func (t *jsonTree) renderedRowsBeforeOffset() int {
+	rows := 0
+	for i := 0; i < t.offset && i < len(t.visible); i++ {
 		rows += t.renderedLineCount(i)
 	}
 	return rows
@@ -305,6 +363,7 @@ func (t *jsonTree) jumpToParent() {
 }
 
 func (t *jsonTree) setAll(v bool) {
+	rootIndex := t.cursorRoot()
 	var walk func(n *jsonNode)
 	walk = func(n *jsonNode) {
 		if n.kind != kindScalar {
@@ -321,4 +380,74 @@ func (t *jsonTree) setAll(v bool) {
 		}
 	}
 	t.rebuild()
+	if !v && rootIndex < len(t.roots) {
+		for i, vl := range t.visible {
+			if !vl.isSep && vl.node == t.roots[rootIndex] {
+				t.cursor = i
+				t.offset = 0
+				t.clampOffset()
+				return
+			}
+		}
+	}
+}
+
+func (t *jsonTree) currentPath() string {
+	if len(t.visible) == 0 || t.cursor < 0 || t.cursor >= len(t.visible) {
+		return ""
+	}
+	current := t.visible[t.cursor]
+	if current.isSep || current.node == nil {
+		return ""
+	}
+
+	neededDepth := current.depth
+	nodes := make([]*jsonNode, neededDepth+1)
+	for i := t.cursor; i >= 0 && neededDepth >= 0; i-- {
+		vl := t.visible[i]
+		if vl.isSep || vl.node == nil || vl.depth != neededDepth {
+			continue
+		}
+		nodes[neededDepth] = vl.node
+		neededDepth--
+	}
+	if len(nodes) == 0 || nodes[0] == nil {
+		return ""
+	}
+
+	path := nodes[0].key
+	for i := 1; i < len(nodes); i++ {
+		if nodes[i] == nil || nodes[i].key == "" {
+			continue
+		}
+		path += jsonPathSegment(nodes[i-1], nodes[i].key)
+	}
+	return path
+}
+
+func jsonPathSegment(parent *jsonNode, key string) string {
+	if parent != nil && parent.kind == kindArray {
+		return "[" + key + "]"
+	}
+	if isDotPathKey(key) {
+		return "." + key
+	}
+	return "[" + strconv.Quote(key) + "]"
+}
+
+func isDotPathKey(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		switch {
+		case r == '_':
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case i > 0 && r >= '0' && r <= '9':
+		default:
+			return false
+		}
+	}
+	return true
 }

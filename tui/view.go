@@ -17,7 +17,7 @@ func (m Model) View() string {
 		m.callCountLine(),
 		rule(g.leftCW),
 	}
-	leftBody = append(leftBody, toLines(m.list.View(), g.listH)...)
+	leftBody = append(leftBody, m.callListLines(g)...)
 	if m.groupsVisible {
 		leftBody = append(leftBody, "")
 		leftBody = append(leftBody, m.groupHeader(g.leftCW))
@@ -25,11 +25,12 @@ func (m Model) View() string {
 	}
 
 	rightBody := append([]string{}, m.detailHeaderLines(g.rightCW)...)
-	rightBody = append(rightBody, "")
 	if m.tree.typing || m.tree.filterOn {
-		rightBody = append(rightBody, m.inspectorFilterBar(), "")
+		rightBody = append(rightBody, m.inspectorFilterBar())
 	}
-	rightBody = append(rightBody, toLines(m.tree.View(), g.treeH)...)
+	rightBody = append(rightBody, m.inspectorPathBar())
+	rightBody = append(rightBody, "")
+	rightBody = append(rightBody, m.inspectorTreeLines(g)...)
 
 	// Pad both bodies to the same height so the panes' bottom borders align.
 	n := max(len(leftBody), len(rightBody))
@@ -47,16 +48,37 @@ func (m Model) View() string {
 }
 
 func (m Model) inspectorFilterBar() string {
-	section := "keys"
-	if m.tree.filterRoot < len(m.tree.roots) {
-		section = strings.ToLower(m.tree.roots[m.tree.filterRoot].key) + " keys"
-	}
-	label := styleDim.Render("filter " + section + "  /")
+	label := styleDim.Render("filter keys  /")
 	query := styleFilterText.Render(m.tree.filter)
 	if m.tree.typing {
 		return label + query + styleAccentBlock.Render(" ")
 	}
 	return label + query + styleFaint.Render("   esc clears")
+}
+
+func (m Model) inspectorPathBar() string {
+	path := m.tree.currentPath()
+	if path == "" {
+		path = "-"
+	}
+	return styleFaint.Render("path ") + stylePath.Render(path)
+}
+
+func (m Model) callListLines(g geom) []string {
+	return toLines(m.list.View(), g.listH)
+}
+
+func (m Model) inspectorTreeLines(g geom) []string {
+	lines := toLines(m.tree.View(), g.treeH)
+	marks := m.tree.scrollbarMarks()
+	for i := range lines {
+		mark := " "
+		if i < len(marks) {
+			mark = marks[i]
+		}
+		lines[i] = fitLine(lines[i], m.tree.width) + " " + mark
+	}
+	return lines
 }
 
 // frame draws a rounded box around body lines with the title set into the top
@@ -146,6 +168,7 @@ func (m Model) helpBar() string {
 			{"↑↓", "move"},
 			{"enter", "inspect"},
 			{"/", "filter"},
+			{"g", "groups"},
 			{"ctrl+x", "clear"},
 			{"tab", "switch"},
 			{"?", "shortcuts"},
@@ -156,6 +179,7 @@ func (m Model) helpBar() string {
 			{"↑↓", "group"},
 			{"enter", "calls"},
 			{"esc", "all"},
+			{"ctrl+g", "new group"},
 			{"tab", "switch"},
 			{"?", "shortcuts"},
 		}
@@ -171,6 +195,7 @@ func (m Model) helpBar() string {
 		pairs = [][2]string{
 			{"↑↓", "move"},
 			{"←→", "fold"},
+			{"+/-", "all"},
 			{"pgup/dn", "page"},
 			{"/", "filter keys"},
 			{"?", "shortcuts"},

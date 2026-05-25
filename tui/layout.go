@@ -30,9 +30,9 @@ func (m Model) geometry() geom {
 		g.listH = max(1, g.bodyN-3) // filter + count + rule
 	}
 	g.detailH = len(m.detailHeaderLines(g.rightCW))
-	treeChromeH := 1 // spacer between request summary and tree
+	treeChromeH := 2 // current JSON path + spacer
 	if m.tree.typing || m.tree.filterOn {
-		treeChromeH = 3 // spacer + filter bar + spacer
+		treeChromeH = 3 // filter bar + current JSON path + spacer
 	}
 	g.treeH = max(1, g.bodyN-g.detailH-treeChromeH)
 	return g
@@ -44,7 +44,7 @@ func (m *Model) layout() {
 	}
 	g := m.geometry()
 	m.list.SetSize(g.leftCW, g.listH)
-	m.tree.width = g.rightCW
+	m.tree.width = max(1, g.rightCW-2)
 	m.tree.height = g.treeH
 	m.tree.clampOffset()
 }
