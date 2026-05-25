@@ -127,7 +127,7 @@ Stripe object IDs in the inspector are rendered as clickable hyperlinks to the S
 |---|---|---|
 | `STRIPEEK_ADDR` | `127.0.0.1:4242` | Address the proxy listens on |
 | `STRIPEEK_HISTORY_LIMIT` | `100` | Maximum number of calls kept in memory and on disk |
-| `STRIPEEK_HISTORY_PATH` | `$TMPDIR/stripeek-calls.json` | Where call history is persisted between sessions |
+| `STRIPEEK_HISTORY_PATH` | `os.TempDir()/stripeek-calls.json` | Where call history is persisted between sessions (`$TMPDIR` on macOS, `/tmp` on Linux) |
 
 ## Contributing
 
