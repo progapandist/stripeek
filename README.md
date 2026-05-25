@@ -1,8 +1,11 @@
 # stripeek
 
-A terminal UI for inspecting local Stripe API traffic in real time.
+Debugging a Stripe integration locally usually means guessing what the SDK actually sends, sprinkling log statements, or opening the Stripe Dashboard after the fact. stripeek shows you the full request/response pair as it happens — headers, body, status, and latency — without touching your application code. Stripe responses are deeply nested JSON, and stripeek lets you navigate and filter that structure interactively, which is far faster than squinting at raw logs.
 
 stripeek runs as a reverse proxy between your application and `api.stripe.com`. Point your Stripe SDK at `http://localhost:4242` and every request/response pair appears in a browsable TUI — with full JSON inspection, request grouping, persistent history, and clickable Stripe Dashboard links.
+
+> **For local development only.**  
+> Redirecting your SDK's base URL to stripeek means your app routes all Stripe traffic through the proxy. If stripeek isn't running, every Stripe API call will fail. Never commit these changes or deploy them to staging or production — keep them in local dev overrides (environment-specific initializers, `.env.development`, or a dev-only boot file).
 
 ## Installation
 
@@ -18,33 +21,62 @@ Requires Go 1.24 or later. The binary lands in `$(go env GOPATH)/bin` — make s
 stripeek          # listens on http://localhost:4242
 ```
 
-Then redirect your Stripe SDK to the proxy for the duration of your session:
+Then redirect your Stripe SDK to the proxy — **in your local dev environment only**. Stripe calls will fail if stripeek isn't running after this change, so guard it behind an environment check:
 
 **Ruby**
 ```ruby
-Stripe.api_base = "http://localhost:4242"
+# config/initializers/stripe.rb (or equivalent dev-only file)
+if Rails.env.development?
+  Stripe.api_base = "http://localhost:4242"
+end
 ```
 
 **Python**
 ```python
-stripe.api_base = "http://localhost:4242"
+import os
+if os.getenv("APP_ENV") == "development":
+    stripe.api_base = "http://localhost:4242"
 ```
 
 **Node.js**
 ```js
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-  host: "localhost",
-  port: 4242,
-  protocol: "http",
+  ...(process.env.NODE_ENV === "development" && {
+    host: "localhost",
+    port: 4242,
+    protocol: "http",
+  }),
 });
 ```
 
 **Go**
 ```go
-stripe.SetAPIBase("http://localhost:4242")
+if os.Getenv("APP_ENV") == "development" {
+    stripe.SetAPIBase("http://localhost:4242")
+}
 ```
 
 stripeek proxies every request to the real Stripe API and captures the full request/response pair, including headers, body, status code, latency, and Stripe request ID. Your keys are redacted from captured headers automatically.
+
+## Rails example
+
+`config/initializers/stripe.rb`:
+```ruby
+Stripe.api_key = ENV.fetch("STRIPE_SECRET_KEY")
+
+# Route traffic through stripeek when developing locally.
+# Requires `stripeek` to be running — Stripe calls will fail without it.
+if Rails.env.development? && ENV.key?("STRIPE_PROXY_URL")
+  Stripe.api_base = ENV.fetch("STRIPE_PROXY_URL")
+end
+```
+
+Start your server with the variable set to enable proxying:
+```bash
+STRIPE_PROXY_URL=http://localhost:4242 bin/rails server
+```
+
+Omit the variable (or start the server normally) to talk to Stripe directly. Production and staging are never affected — the block only runs in the development environment.
 
 ## Keyboard shortcuts
 
