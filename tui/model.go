@@ -71,6 +71,10 @@ func NewWithCalls(maxCalls int, calls []proxy.Call) Model {
 }
 
 func NewWithGroupManager(maxCalls int, calls []proxy.Call, groupMgr *GroupManager) Model {
+	if groupMgr == nil {
+		groupMgr = NewGroupManager(calls)
+	}
+
 	l := list.New(nil, callDelegate{}, 0, 0)
 	l.SetShowTitle(false)
 	l.SetShowStatusBar(false)
@@ -85,11 +89,7 @@ func NewWithGroupManager(maxCalls int, calls []proxy.Call, groupMgr *GroupManage
 		groupMgr: groupMgr,
 	}
 	for _, c := range calls {
-		m.nextID++
-		m.allCalls = append([]callItem{{call: c, id: m.nextID}}, m.allCalls...)
-		if m.maxCalls > 0 && len(m.allCalls) > m.maxCalls {
-			m.allCalls = m.allCalls[:m.maxCalls]
-		}
+		m.prependCall(c)
 	}
 	m.rebuildList()
 	return m
@@ -166,18 +166,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case NewCallMsg:
 		followTop := len(m.list.Items()) == 0 || m.list.Index() == 0
-		m.nextID++
 		call := proxy.Call(msg)
 		if call.Group == nil {
+			if m.groupMgr == nil {
+				m.groupMgr = NewGroupManager(nil)
+			}
 			if group := m.groupMgr.Current(); group != nil && !call.Time.Before(group.StartedAt) {
 				call.Group = group
 			}
 		}
-		item := callItem{call: call, id: m.nextID}
-		m.allCalls = append([]callItem{item}, m.allCalls...)
-		if m.maxCalls > 0 && len(m.allCalls) > m.maxCalls {
-			m.allCalls = m.allCalls[:m.maxCalls]
-		}
+		m.prependCall(call)
 		m.rebuildList()
 		if followTop && len(m.list.Items()) > 0 {
 			m.list.Select(0)
@@ -187,6 +185,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, cmd
+}
+
+func (m *Model) prependCall(call proxy.Call) {
+	m.nextID++
+	m.allCalls = append([]callItem{{call: call, id: m.nextID}}, m.allCalls...)
+	if m.maxCalls > 0 && len(m.allCalls) > m.maxCalls {
+		m.allCalls = m.allCalls[:m.maxCalls]
+	}
 }
 
 // inputActive reports whether a text-entry mode is capturing keystrokes, so

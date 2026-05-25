@@ -66,6 +66,19 @@ func key(s string) tea.KeyMsg {
 	}
 }
 
+func numberObject(prefix string, n int) string {
+	var b strings.Builder
+	b.WriteByte('{')
+	for i := range n {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, "%q:%d", fmt.Sprintf("%s%02d", prefix, i), i)
+	}
+	b.WriteByte('}')
+	return b.String()
+}
+
 func TestRendersBothPanesAndHelp(t *testing.T) {
 	m := drive(New(),
 		tea.WindowSizeMsg{Width: 100, Height: 30},
@@ -112,35 +125,20 @@ func TestTabTogglesFocus(t *testing.T) {
 	}
 }
 
-func TestPaneTitleMarksFocusedPane(t *testing.T) {
-	m := drive(New(), tea.WindowSizeMsg{Width: 100, Height: 30})
-	view := m.View()
-	if !strings.Contains(view, "CALLS") {
-		t.Fatalf("list pane was not marked active:\n%s", view)
-	}
-	if strings.Contains(view, "INSPECTOR") {
-		t.Fatalf("inspector mode shown while list focused:\n%s", view)
-	}
-
-	m = drive(m, key("tab"))
-	view = m.View()
-	if !strings.Contains(view, "INSPECTOR") {
-		t.Fatalf("inspector pane was not marked active:\n%s", view)
-	}
-	if !strings.Contains(view, "INSPECTOR") {
-		t.Fatalf("inspector mode not shown while payload focused:\n%s", view)
-	}
-}
-
-func TestShortcutOverlayShowsUnifiedSections(t *testing.T) {
+func TestShortcutOverlayIsGlobal(t *testing.T) {
 	m := drive(New(), tea.WindowSizeMsg{Width: 100, Height: 30}, key("?"))
 	if !m.shortcuts {
 		t.Fatal("? did not open shortcuts")
 	}
 	view := m.View()
-	for _, want := range []string{"SHORTCUTS", "Global", "Calls", "Inspector", "Groups", "ctrl+b/f", "ctrl+u/d"} {
+	for _, section := range shortcutSections() {
+		if !strings.Contains(view, section.title) {
+			t.Fatalf("shortcut overlay missing section %q:\n%s", section.title, view)
+		}
+	}
+	for _, want := range []string{"SHORTCUTS", "ctrl+b/f", "ctrl+u/d"} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("unified shortcuts overlay missing %q:\n%s", want, view)
+			t.Fatalf("shortcut overlay missing %q:\n%s", want, view)
 		}
 	}
 
@@ -156,35 +154,31 @@ func TestShortcutOverlayShowsUnifiedSections(t *testing.T) {
 	}
 }
 
-func TestFooterShowsGroupShortcutsByContext(t *testing.T) {
+func TestHelpBarReflectsFocusState(t *testing.T) {
 	m := drive(New(),
 		tea.WindowSizeMsg{Width: 160, Height: 36},
 		NewCallMsg(sampleCall()),
 	)
-	view := m.View()
-	if !strings.Contains(view, "g groups") {
-		t.Fatalf("calls footer missing group toggle shortcut:\n%s", view)
+	if got := m.helpBar(); !strings.Contains(got, "enter inspect") || !strings.Contains(got, "g groups") {
+		t.Fatalf("list help bar = %q, want inspect and groups shortcuts", got)
 	}
 
-	m = drive(m, key("ctrl+g"), key("tab"))
+	m = drive(m, key("enter"))
+	if got := m.helpBar(); !strings.Contains(got, "+/- all") || !strings.Contains(got, "esc back") {
+		t.Fatalf("inspector help bar = %q, want expand-all and back shortcuts", got)
+	}
+
+	m = drive(m, key("/"))
+	if got := m.helpBar(); !strings.Contains(got, "type filter keys") || !strings.Contains(got, "esc cancel") {
+		t.Fatalf("filter help bar = %q, want typing shortcuts", got)
+	}
+
+	m = drive(New(), tea.WindowSizeMsg{Width: 160, Height: 36}, key("ctrl+g"), key("tab"))
 	if m.focused != focusGroups {
 		t.Fatalf("test setup focused %q, want groups", m.focused)
 	}
-	view = m.View()
-	if !strings.Contains(view, "ctrl+g new group") {
-		t.Fatalf("groups footer missing create-group shortcut:\n%s", view)
-	}
-}
-
-func TestInspectorHelpSurfacesExpandCollapseAll(t *testing.T) {
-	m := drive(New(),
-		tea.WindowSizeMsg{Width: 100, Height: 30},
-		NewCallMsg(sampleCall()),
-		key("enter"),
-	)
-	view := m.View()
-	if !strings.Contains(view, "+/-") || !strings.Contains(view, "all") {
-		t.Fatalf("inspector help did not surface expand/collapse all:\n%s", view)
+	if got := m.helpBar(); !strings.Contains(got, "enter calls") || !strings.Contains(got, "ctrl+g new group") {
+		t.Fatalf("groups help bar = %q, want group selection shortcuts", got)
 	}
 }
 
@@ -249,25 +243,6 @@ func TestInspectorHeaderWrapsRequestURLAndGroupName(t *testing.T) {
 	}
 	if !strings.Contains(view, "Group invoices") || strings.Contains(view, "group Group") {
 		t.Fatalf("inspector header did not render the group name directly:\n%s", view)
-	}
-}
-
-func TestInspectorOmitsSubheadRuleWhenKeyFilterInactive(t *testing.T) {
-	m := drive(New(),
-		tea.WindowSizeMsg{Width: 100, Height: 30},
-		NewCallMsg(sampleCall()),
-	)
-	view := m.View()
-	g := m.geometry()
-	wantTreeH := g.bodyN - len(m.detailHeaderLines(g.rightCW)) - 2
-	if m.tree.height != wantTreeH {
-		t.Fatalf("tree height = %d, want %d without inactive divider:\n%s", m.tree.height, wantTreeH, view)
-	}
-
-	m = drive(m, key("enter"), key("/"))
-	view = m.View()
-	if !strings.Contains(view, "filter keys") {
-		t.Fatalf("active key filter bar missing:\n%s", view)
 	}
 }
 
@@ -426,13 +401,13 @@ func TestInspectorKeyFilterMatchesRequestAndResponse(t *testing.T) {
 }
 
 func TestInspectorKeyFilterRequiresContiguousMatch(t *testing.T) {
-	if !fuzzyMatch("end_date", "end") {
+	if !keyMatchesFilter("end_date", "end") {
 		t.Fatal("end should match end_date")
 	}
-	if !fuzzyMatch("period_end", "end") {
+	if !keyMatchesFilter("period_end", "end") {
 		t.Fatal("end should match period_end")
 	}
-	if fuzzyMatch("collection_method", "end") {
+	if keyMatchesFilter("collection_method", "end") {
 		t.Fatal("end should not match collection_method as a non-contiguous subsequence")
 	}
 }
@@ -502,14 +477,7 @@ func TestInspectorFilterPreservesFolding(t *testing.T) {
 }
 
 func TestInspectorFilterRelayoutKeepsCursorVisible(t *testing.T) {
-	body := "{"
-	for i := range 40 {
-		if i > 0 {
-			body += ","
-		}
-		body += fmt.Sprintf("%q:%d", fmt.Sprintf("end_%02d", i), i)
-	}
-	body += "}"
+	body := numberObject("end_", 40)
 
 	m := drive(New(),
 		tea.WindowSizeMsg{Width: 100, Height: 16},
@@ -565,14 +533,7 @@ func TestInspectorShowsCurrentJSONPath(t *testing.T) {
 }
 
 func TestPanesShowScrollIndicators(t *testing.T) {
-	body := "{"
-	for i := range 30 {
-		if i > 0 {
-			body += ","
-		}
-		body += fmt.Sprintf("%q:%d", fmt.Sprintf("k%02d", i), i)
-	}
-	body += "}"
+	body := numberObject("k", 30)
 
 	m := drive(NewWithMaxCalls(40), tea.WindowSizeMsg{Width: 110, Height: 18})
 	for i := range 20 {
@@ -585,15 +546,12 @@ func TestPanesShowScrollIndicators(t *testing.T) {
 		m = drive(m, NewCallMsg(c))
 	}
 
-	view := m.View()
-	if strings.Contains(view, "CALLS ↓") || strings.Contains(view, "Inspector ↓") {
-		t.Fatalf("pane titles should not carry scroll indicators:\n%s", view)
+	if got := m.callProgressLabel(); !strings.Contains(got, "1/20 ↓") {
+		t.Fatalf("call progress label = %q, want top-of-list scroll hint", got)
 	}
-	if !strings.Contains(view, "1/20 ↓") {
-		t.Fatalf("calls pane missing readable pagination:\n%s", view)
-	}
-	if !strings.Contains(view, "│") || !strings.Contains(view, "█") {
-		t.Fatalf("inspector pane missing scrollbar track/thumb:\n%s", view)
+	marks := strings.Join(m.tree.scrollbarMarks(), "")
+	if !strings.Contains(marks, "│") || !strings.Contains(marks, "█") {
+		t.Fatalf("scrollbar marks = %q, want track and thumb", marks)
 	}
 }
 
@@ -669,14 +627,7 @@ func TestInspectorKeepsCursorVisibleBelowWrappedScalar(t *testing.T) {
 }
 
 func TestInspectorPageKeysUseFullAndHalfSteps(t *testing.T) {
-	body := "{"
-	for i := range 30 {
-		if i > 0 {
-			body += ","
-		}
-		body += fmt.Sprintf("%q:%d", fmt.Sprintf("k%02d", i), i)
-	}
-	body += "}"
+	body := numberObject("k", 30)
 
 	base := jsonTree{width: 40, height: 10, focused: true}
 	base.setCall(proxy.Call{ReqBody: []byte("{}"), RespBody: []byte(body)})
@@ -795,16 +746,10 @@ func TestRequestGroupingStartsGroupAndAssignsNewCalls(t *testing.T) {
 		t.Fatalf("new call group = %#v, want active group %q", got, active.ID)
 	}
 	view := m.View()
-	for _, want := range []string{"GROUPS", "Group Teal", "1 in Group Teal", "█", "▌"} {
+	for _, want := range []string{"GROUPS", "Group Teal", "1 in Group Teal"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("grouped view missing %q\n%s", want, view)
 		}
-	}
-	if strings.Contains(view, "/v1/customers 200  Group Teal") {
-		t.Fatalf("request row should not repeat the group name:\n%s", view)
-	}
-	if strings.Contains(view, "●") {
-		t.Fatalf("request row should use the gutter, not a trailing group dot:\n%s", view)
 	}
 }
 

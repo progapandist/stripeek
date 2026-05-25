@@ -30,7 +30,16 @@ vet:
 
 lint:
 	@command -v staticcheck >/dev/null || { echo "install: go install honnef.co/go/tools/cmd/staticcheck@latest"; exit 1; }
-	staticcheck ./...
+	@tmp="$$(mktemp)"; \
+	trap 'rm -f "$$tmp"' EXIT; \
+	staticcheck ./... >"$$tmp" 2>&1; \
+	status=$$?; \
+	cat "$$tmp"; \
+	if grep -q 'matched no packages' "$$tmp"; then \
+		echo "staticcheck matched no packages; fix Go package loading before trusting lint"; \
+		exit 1; \
+	fi; \
+	exit $$status
 
 check: fmt vet lint build
 

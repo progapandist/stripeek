@@ -5,9 +5,9 @@ import "strings"
 // noMatchNode is the placeholder shown when a section has no matching keys.
 var noMatchNode = &jsonNode{kind: kindScalar, value: "(no matches)", plainValue: "(no matches)", scalarColor: colFaint, dim: true}
 
-// fuzzyMatch reports whether query appears contiguously in key
-// (case-insensitive). An empty query matches everything.
-func fuzzyMatch(key, query string) bool {
+// keyMatchesFilter reports whether query is a case-insensitive substring of
+// key. An empty query matches everything.
+func keyMatchesFilter(key, query string) bool {
 	if query == "" {
 		return true
 	}
@@ -31,7 +31,7 @@ func (t *jsonTree) walkFilteredRoot(root *jsonNode) {
 	kept := 0
 	for _, c := range root.children {
 		if t.matchCache[c] {
-			t.walkFilteredNode(c, 1, fuzzyMatch(c.key, t.filter))
+			t.walkFilteredNode(c, 1, keyMatchesFilter(c.key, t.filter))
 			kept++
 		}
 	}
@@ -47,7 +47,7 @@ func (t *jsonTree) walkFilteredNode(n *jsonNode, depth int, forced bool) {
 	}
 	for _, c := range n.children {
 		if forced || t.matchCache[c] {
-			t.walkFilteredNode(c, depth+1, forced || fuzzyMatch(c.key, t.filter))
+			t.walkFilteredNode(c, depth+1, forced || keyMatchesFilter(c.key, t.filter))
 		}
 	}
 }
@@ -55,7 +55,7 @@ func (t *jsonTree) walkFilteredNode(n *jsonNode, depth int, forced bool) {
 // computeMatch fills matchCache with whether each node, or any descendant,
 // matches the current filter (independent of fold state).
 func (t *jsonTree) computeMatch(n *jsonNode) bool {
-	m := fuzzyMatch(n.key, t.filter)
+	m := keyMatchesFilter(n.key, t.filter)
 	for _, c := range n.children {
 		if t.computeMatch(c) {
 			m = true
@@ -91,7 +91,7 @@ func (t *jsonTree) firstFilteredLine() int {
 		if fallback < 0 {
 			fallback = i
 		}
-		if t.filter != "" && vl.depth > 0 && fuzzyMatch(vl.node.key, t.filter) {
+		if t.filter != "" && vl.depth > 0 && keyMatchesFilter(vl.node.key, t.filter) {
 			return i
 		}
 	}

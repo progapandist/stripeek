@@ -2,6 +2,7 @@ package history
 
 import (
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -81,5 +82,44 @@ func TestStorePersistsRequestGroup(t *testing.T) {
 	}
 	if loaded[0].Group == nil || loaded[0].Group.ID != group.ID || loaded[0].Group.Name != group.Name {
 		t.Fatalf("loaded group = %#v, want %#v", loaded[0].Group, group)
+	}
+}
+
+func TestStoreSerializesConcurrentAccess(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "calls.json")
+	store := New(path, 20)
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 60)
+	for i := range 40 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- store.Append(proxy.Call{
+				Time:   time.Now(),
+				Method: "GET",
+				Path:   "/v1/customers",
+				Status: 200,
+			})
+		}()
+
+		if i%4 == 0 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				errs <- store.Clear()
+			}()
+		}
+	}
+
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent store operation: %v", err)
+		}
+	}
+	if _, err := store.Load(); err != nil {
+		t.Fatalf("load after concurrent operations: %v", err)
 	}
 }

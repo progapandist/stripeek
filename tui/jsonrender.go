@@ -92,7 +92,7 @@ func (t *jsonTree) renderLines(vl *visibleLine, isCursor bool) []string {
 	}
 	// Emphasize keys that actually match the filter (vs. path ancestors kept
 	// only to reach a match).
-	if t.filterOn && t.filter != "" && n.key != "" && fuzzyMatch(n.key, t.filter) {
+	if t.filterOn && t.filter != "" && n.key != "" && keyMatchesFilter(n.key, t.filter) {
 		keyStyle = styleMatch
 	}
 	b.WriteString(keyStyle.Render(n.key))

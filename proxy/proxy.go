@@ -16,6 +16,15 @@ const StripeAPI = "https://api.stripe.com"
 
 const DefaultMaxBodyBytes int64 = 2 << 20
 
+var sensitiveHeaders = map[string]struct{}{
+	"authorization":          {},
+	"cookie":                 {},
+	"proxy-authorization":    {},
+	"set-cookie":             {},
+	"stripe-signature":       {},
+	"x-stripe-client-secret": {},
+}
+
 type proxyErrorKey struct{}
 
 // Group identifies a user-created debugging group assigned to captured calls.
@@ -135,7 +144,10 @@ func Handler(calls chan<- Call, opts ...Option) http.Handler {
 
 		var reqCapture *captureReadCloser
 		if r.Body != nil {
-			reqCapture = &captureReadCloser{ReadCloser: r.Body, maxBodyBytes: cfg.maxBodyBytes}
+			reqCapture = &captureReadCloser{
+				ReadCloser: r.Body,
+				capture:    newBodyCapture(cfg.maxBodyBytes),
+			}
 			r.Body = reqCapture
 		}
 		var proxyErr string
@@ -143,21 +155,20 @@ func Handler(calls chan<- Call, opts ...Option) http.Handler {
 
 		rw := &responseWriter{
 			ResponseWriter: w,
-			buf:            &bytes.Buffer{},
-			maxBodyBytes:   cfg.maxBodyBytes,
+			capture:        newBodyCapture(cfg.maxBodyBytes),
 		}
 		rp.ServeHTTP(rw, r)
 
 		if reqCapture != nil {
-			call.ReqBody = reqCapture.buf.Bytes()
-			call.ReqBodyTruncated = reqCapture.truncated
+			call.ReqBody = reqCapture.capture.Bytes()
+			call.ReqBodyTruncated = reqCapture.capture.truncated
 			if reqCapture.err != nil {
 				call.Error = reqCapture.err.Error()
 			}
 		}
 		call.Status = rw.status
-		call.RespBody = rw.buf.Bytes()
-		call.RespBodyTruncated = rw.truncated
+		call.RespBody = rw.capture.Bytes()
+		call.RespBodyTruncated = rw.capture.truncated
 		call.ResponseHeader = redactedHeader(rw.Header())
 		call.StripeRequestID = rw.Header().Get("Request-Id")
 		call.Latency = time.Since(start)
@@ -178,35 +189,53 @@ func Handler(calls chan<- Call, opts ...Option) http.Handler {
 func redactedHeader(h http.Header) http.Header {
 	out := h.Clone()
 	for k := range out {
-		switch strings.ToLower(k) {
-		case "authorization", "cookie", "set-cookie", "x-stripe-client-secret":
+		if _, ok := sensitiveHeaders[strings.ToLower(k)]; ok {
 			out[k] = []string{"[redacted]"}
 		}
 	}
 	return out
 }
 
-type captureReadCloser struct {
-	io.ReadCloser
+type bodyCapture struct {
 	buf          bytes.Buffer
 	maxBodyBytes int64
 	truncated    bool
-	err          error
+}
+
+func newBodyCapture(maxBodyBytes int64) bodyCapture {
+	return bodyCapture{maxBodyBytes: maxBodyBytes}
+}
+
+func (c *bodyCapture) Write(p []byte) {
+	if len(p) == 0 {
+		return
+	}
+	remaining := c.maxBodyBytes - int64(c.buf.Len())
+	switch {
+	case remaining <= 0:
+		c.truncated = true
+	case int64(len(p)) > remaining:
+		c.buf.Write(p[:int(remaining)])
+		c.truncated = true
+	default:
+		c.buf.Write(p)
+	}
+}
+
+func (c *bodyCapture) Bytes() []byte {
+	return c.buf.Bytes()
+}
+
+type captureReadCloser struct {
+	io.ReadCloser
+	capture bodyCapture
+	err     error
 }
 
 func (c *captureReadCloser) Read(p []byte) (int, error) {
 	n, err := c.ReadCloser.Read(p)
 	if n > 0 {
-		remaining := c.maxBodyBytes - int64(c.buf.Len())
-		switch {
-		case remaining <= 0:
-			c.truncated = true
-		case int64(n) > remaining:
-			c.buf.Write(p[:remaining])
-			c.truncated = true
-		default:
-			c.buf.Write(p[:n])
-		}
+		c.capture.Write(p[:n])
 	}
 	if err != nil && !errors.Is(err, io.EOF) {
 		c.err = err
@@ -216,11 +245,13 @@ func (c *captureReadCloser) Read(p []byte) (int, error) {
 
 type responseWriter struct {
 	http.ResponseWriter
-	status       int
-	buf          *bytes.Buffer
-	maxBodyBytes int64
-	truncated    bool
-	err          string
+	status  int
+	capture bodyCapture
+	err     string
+}
+
+func (rw *responseWriter) Unwrap() http.ResponseWriter {
+	return rw.ResponseWriter
 }
 
 func (rw *responseWriter) WriteHeader(code int) {
@@ -232,15 +263,10 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 	if rw.status == 0 {
 		rw.status = http.StatusOK
 	}
-	remaining := rw.maxBodyBytes - int64(rw.buf.Len())
-	switch {
-	case remaining <= 0:
-		rw.truncated = true
-	case int64(len(b)) > remaining:
-		rw.buf.Write(b[:remaining])
-		rw.truncated = true
-	default:
-		rw.buf.Write(b)
+	rw.capture.Write(b)
+	n, err := rw.ResponseWriter.Write(b)
+	if err != nil {
+		rw.err = err.Error()
 	}
-	return rw.ResponseWriter.Write(b)
+	return n, err
 }

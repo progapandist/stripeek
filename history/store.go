@@ -5,26 +5,35 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/progapandist/stripeek/proxy"
 )
 
-// Store keeps a rotating JSON history of captured calls.
+// Store keeps a rotating JSON history of captured calls. It is safe to use from
+// the capture goroutine and the TUI update loop concurrently.
 type Store struct {
+	mu    sync.Mutex
 	path  string
 	limit int
 	calls []proxy.Call
 }
 
+// New returns a Store backed by path. A non-positive limit disables persistence.
 func New(path string, limit int) *Store {
 	return &Store{path: path, limit: limit}
 }
 
+// DefaultPath returns the per-machine fallback history path.
 func DefaultPath() string {
 	return filepath.Join(os.TempDir(), "stripeek-calls.json")
 }
 
+// Load reads persisted calls from disk and returns them oldest first.
 func (s *Store) Load() ([]proxy.Call, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if s.limit <= 0 {
 		s.calls = nil
 		return nil, nil
@@ -51,7 +60,11 @@ func (s *Store) Load() ([]proxy.Call, error) {
 	return append([]proxy.Call(nil), s.calls...), nil
 }
 
+// Clear removes in-memory and on-disk history.
 func (s *Store) Clear() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	s.calls = nil
 	err := os.Remove(s.path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -60,16 +73,20 @@ func (s *Store) Clear() error {
 	return err
 }
 
+// Append records c and rewrites the bounded history file.
 func (s *Store) Append(c proxy.Call) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if s.limit <= 0 {
 		return nil
 	}
 	s.calls = append(s.calls, c)
 	s.calls = trimOldest(s.calls, s.limit)
-	return s.flush()
+	return s.flushLocked()
 }
 
-func (s *Store) flush() error {
+func (s *Store) flushLocked() error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		return err
 	}
