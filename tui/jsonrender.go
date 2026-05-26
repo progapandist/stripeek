@@ -53,7 +53,11 @@ func (t *jsonTree) renderLines(vl *visibleLine, isCursor bool) []string {
 		if isCursor {
 			return []string{styleCursor.Width(t.width).Render(fitLine(marker+label, t.width))}
 		}
-		head := styleSectionHeader.Render(marker + label)
+		sectionStyle := styleSectionHeader
+		if n.header {
+			sectionStyle = styleHeaderSection
+		}
+		head := sectionStyle.Render(marker + label)
 		fill := t.width - lipgloss.Width(head) - 1
 		if fill < 0 {
 			fill = 0
@@ -87,6 +91,9 @@ func (t *jsonTree) renderLines(vl *visibleLine, isCursor bool) []string {
 	b.WriteString(indent)
 	b.WriteString(styleMarker.Render(marker))
 	keyStyle := styleKey
+	if n.header {
+		keyStyle = styleHeaderKey
+	}
 	if n.dim {
 		keyStyle = styleDim
 	}

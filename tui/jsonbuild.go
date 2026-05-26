@@ -3,6 +3,7 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"sort"
 	"strconv"
@@ -26,6 +27,41 @@ func bodyRoot(label string, b []byte) *jsonNode {
 	root := buildNode(label, decodeBody(b))
 	root.expanded = true
 	return root
+}
+
+// headerRoot builds a tree section from an HTTP header map. Single-valued
+// headers render as scalars, repeated headers as arrays. The whole section is
+// flagged header=true so rendering styles it apart from JSON payload fields.
+func headerRoot(label string, h http.Header) *jsonNode {
+	if len(h) == 0 {
+		return &jsonNode{
+			key:      label,
+			kind:     kindObject,
+			expanded: true,
+			header:   true,
+			children: []*jsonNode{{kind: kindScalar, value: "(none)", plainValue: "(none)", scalarColor: colorNull, dim: true, header: true}},
+		}
+	}
+	m := make(map[string]any, len(h))
+	for k, vs := range h {
+		m[k] = formValue(vs)
+	}
+	root := buildNode(label, m)
+	root.expanded = true
+	markHeader(root)
+	return root
+}
+
+// markHeader flags a node subtree as header content and recolors its scalar
+// values so they read as metadata rather than JSON payload.
+func markHeader(n *jsonNode) {
+	n.header = true
+	if n.kind == kindScalar && !n.dim {
+		n.scalarColor = colorHeaderValue
+	}
+	for _, c := range n.children {
+		markHeader(c)
+	}
 }
 
 // decodeBody parses a body as JSON, falling back to form-encoded values (Stripe

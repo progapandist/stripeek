@@ -35,7 +35,8 @@ func (m Model) detailHeaderLines(width int) []string {
 	}
 	status := statusStyle.Bold(true).Render(fmt.Sprintf("%d", c.Status))
 	latency := styleDim.Render(fmt.Sprintf("%dms", c.Latency.Milliseconds()))
-	lines = append(lines, fitLine(status+"  "+latency, width))
+	hint := styleDim.Render("(h to toggle headers)")
+	lines = append(lines, fitLine(status+"  "+latency+"  "+hint, width))
 
 	if c.Group != nil {
 		groupChunks := wrapHeaderText(c.Group.Name, width, max(1, width-2))

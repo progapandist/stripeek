@@ -110,9 +110,10 @@ Omit the variable (or start the server normally) to talk to Stripe directly. Pro
 | Key | Action |
 |---|---|
 | `↑↓` / `j k` | Move one row |
-| `←→` / `h l` | Fold / expand node |
+| `←→` | Fold / expand node |
 | `space` / `enter` | Toggle container |
 | `+` / `-` | Expand / collapse all |
+| `h` | Toggle request / response headers |
 | `/` / `esc` | Filter keys / back to list |
 | `t` / `b` | Jump to top / bottom |
 

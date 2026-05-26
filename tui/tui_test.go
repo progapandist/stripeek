@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"testing"
@@ -838,5 +839,45 @@ func TestGroupPaneResizesAndScrollsCallList(t *testing.T) {
 	}
 	if !strings.Contains(m.View(), selected.call.Path) {
 		t.Fatalf("selected call is not visible after scrolling with group pane open: %s\n%s", selected.call.Path, m.View())
+	}
+}
+
+func TestInspectorTogglesHeaderSections(t *testing.T) {
+	tree := jsonTree{width: 60, height: 24, focused: true}
+	tree.setCall(proxy.Call{
+		ReqBody:        []byte(`{"id":"cus_1"}`),
+		RespBody:       []byte(`{"object":"customer"}`),
+		RequestHeader:  http.Header{"Idempotency-Key": {"abc"}},
+		ResponseHeader: http.Header{"Request-Id": {"req_9"}},
+	})
+
+	if got := tree.View(); strings.Contains(got, "HEADERS") {
+		t.Fatalf("headers should be hidden by default:\n%s", got)
+	}
+
+	tree.Update(key("h"))
+	view := tree.View()
+	for _, want := range []string{"REQUEST HEADERS", "RESPONSE HEADERS", "Idempotency-Key", "Request-Id"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("header toggle did not surface %q:\n%s", want, view)
+		}
+	}
+
+	tree.Update(key("h"))
+	if got := tree.View(); strings.Contains(got, "HEADERS") {
+		t.Fatalf("second 'h' should hide headers again:\n%s", got)
+	}
+}
+
+func TestHeaderNodesAreFlaggedForStyling(t *testing.T) {
+	root := headerRoot("request headers", http.Header{"Content-Type": {"application/json"}})
+	if !root.header {
+		t.Fatal("header root not flagged")
+	}
+	if len(root.children) != 1 || !root.children[0].header {
+		t.Fatalf("header child not flagged: %+v", root.children)
+	}
+	if got := root.children[0].scalarColor; got != colorHeaderValue {
+		t.Fatalf("header value color = %v, want colorHeaderValue", got)
 	}
 }

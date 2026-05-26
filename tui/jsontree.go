@@ -29,6 +29,7 @@ type jsonNode struct {
 	suffix      string // dim annotation appended after value (e.g., human timestamp)
 	scalarColor lipgloss.TerminalColor
 	dim         bool // true for null / empty-string values
+	header      bool // true for HTTP header sections / fields (styled apart)
 	kind        nodeKind
 	children    []*jsonNode
 	expanded    bool
@@ -50,6 +51,14 @@ type jsonTree struct {
 	height  int
 	focused bool
 
+	// The four section roots are built once per call and kept here so toggling
+	// headers re-orders the active root list without discarding fold state.
+	reqHeaders  *jsonNode
+	reqBody     *jsonNode
+	respHeaders *jsonNode
+	respBody    *jsonNode
+	showHeaders bool // include the header sections in the tree
+
 	typing   bool   // true while editing the key filter query
 	filterOn bool   // true while a key filter is applied
 	filter   string // query matched against key names
@@ -58,10 +67,11 @@ type jsonTree struct {
 }
 
 func (t *jsonTree) setCall(c proxy.Call) {
-	t.roots = []*jsonNode{
-		bodyRoot("request", c.ReqBody),
-		bodyRoot("response", c.RespBody),
-	}
+	t.reqHeaders = headerRoot("request headers", c.RequestHeader)
+	t.reqBody = bodyRoot("request", c.ReqBody)
+	t.respHeaders = headerRoot("response headers", c.ResponseHeader)
+	t.respBody = bodyRoot("response", c.RespBody)
+	t.assembleRoots()
 	t.cursor = 0
 	t.offset = 0
 	t.typing = false
@@ -70,9 +80,40 @@ func (t *jsonTree) setCall(c proxy.Call) {
 	t.rebuild()
 }
 
+// assembleRoots sets the active root list, interleaving each header section
+// before its body when headers are shown.
+func (t *jsonTree) assembleRoots() {
+	if t.showHeaders {
+		t.roots = []*jsonNode{t.reqHeaders, t.reqBody, t.respHeaders, t.respBody}
+	} else {
+		t.roots = []*jsonNode{t.reqBody, t.respBody}
+	}
+}
+
+// toggleHeaders shows or hides the header sections, keeping the cursor on the
+// same node when it survives the change.
+func (t *jsonTree) toggleHeaders() {
+	if t.reqBody == nil {
+		return
+	}
+	cur := t.current()
+	t.showHeaders = !t.showHeaders
+	t.assembleRoots()
+	t.rebuild()
+	if cur == nil || !t.selectNode(cur) {
+		t.cursor = t.skipSepForward(0)
+		t.offset = 0
+		t.clampOffset()
+	}
+}
+
 func (t *jsonTree) clear() {
 	t.roots = nil
 	t.visible = nil
+	t.reqHeaders = nil
+	t.reqBody = nil
+	t.respHeaders = nil
+	t.respBody = nil
 	t.cursor = 0
 	t.offset = 0
 	t.typing = false
@@ -163,11 +204,13 @@ func (t *jsonTree) Update(msg tea.Msg) {
 		if t.filterOn {
 			t.clearFilter()
 		}
+	case "h":
+		t.toggleHeaders()
 	case "up", "k":
 		t.move(-1)
 	case "down", "j":
 		t.move(1)
-	case "right", "l":
+	case "right":
 		if n := t.current(); n != nil && n.kind != kindScalar {
 			if !n.expanded {
 				n.expanded = true
@@ -176,7 +219,7 @@ func (t *jsonTree) Update(msg tea.Msg) {
 				t.move(1)
 			}
 		}
-	case "left", "h":
+	case "left":
 		n := t.current()
 		if n != nil && n.kind != kindScalar && n.expanded {
 			n.expanded = false

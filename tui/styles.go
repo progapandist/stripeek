@@ -39,6 +39,11 @@ var (
 	colNumber = adaptive("#b45309", "#f0a868") // JSON number (orange)
 	colBool   = adaptive("#4f46e5", "#a5b4fc") // JSON bool (periwinkle)
 	colKey    = adaptive("#0369a1", "#7dd3fc") // JSON object key (blue)
+
+	// HTTP headers get their own teal family so they read as metadata, clearly
+	// set apart from JSON payload fields when shown in the same tree.
+	colHeaderKey = adaptive("#0e7490", "#5eead4") // header name / section (teal)
+	colHeaderVal = adaptive("#0f766e", "#67c9be") // header value (muted teal)
 )
 
 // Shared text styles.
@@ -66,13 +71,16 @@ var (
 // Inspector JSON tree.
 var (
 	styleKey           = lipgloss.NewStyle().Foreground(colKey)
+	styleHeaderKey     = lipgloss.NewStyle().Foreground(colHeaderKey)
 	styleMarker        = lipgloss.NewStyle().Foreground(colDim)
 	styleCursor        = lipgloss.NewStyle().Background(colSelBg).Foreground(colSelFg)
 	styleMatch         = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
 	styleSectionHeader = lipgloss.NewStyle().Bold(true).Foreground(colAccent)
+	styleHeaderSection = lipgloss.NewStyle().Bold(true).Foreground(colHeaderKey)
 
-	colorString lipgloss.TerminalColor = colString
-	colorNumber lipgloss.TerminalColor = colNumber
-	colorBool   lipgloss.TerminalColor = colBool
-	colorNull   lipgloss.TerminalColor = colFaint
+	colorString      lipgloss.TerminalColor = colString
+	colorNumber      lipgloss.TerminalColor = colNumber
+	colorBool        lipgloss.TerminalColor = colBool
+	colorNull        lipgloss.TerminalColor = colFaint
+	colorHeaderValue lipgloss.TerminalColor = colHeaderVal
 )
