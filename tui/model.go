@@ -7,7 +7,7 @@ import (
 	"github.com/progapandist/stripeek/proxy"
 )
 
-const DefaultMaxCalls = 100
+const DefaultMaxCalls = 1000
 
 // focusZone identifies which pane currently receives key input.
 type focusZone int
