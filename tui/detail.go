@@ -38,6 +38,10 @@ func (m Model) detailHeaderLines(width int) []string {
 	hint := styleDim.Render("(h to toggle headers)")
 	lines = append(lines, fitLine(status+"  "+latency+"  "+hint, width))
 
+	if badge := modeBadge(c.KeyMode); badge != "" {
+		lines = append(lines, fitLine(badge, width))
+	}
+
 	if c.Group != nil {
 		groupChunks := wrapHeaderText(c.Group.Name, width, max(1, width-2))
 		if len(groupChunks) == 0 {
@@ -52,6 +56,18 @@ func (m Model) detailHeaderLines(width int) []string {
 		}
 	}
 	return lines
+}
+
+// modeBadge renders the call's TEST/LIVE badge, inferred from the API key.
+// Empty when the mode couldn't be determined.
+func modeBadge(mode string) string {
+	switch mode {
+	case "test":
+		return styleModeTest.Render("TEST")
+	case "live":
+		return styleModeLive.Render("LIVE")
+	}
+	return ""
 }
 
 func wrapHeaderText(s string, firstWidth, restWidth int) []string {

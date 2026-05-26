@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"encoding/base64"
 	"errors"
 	"io"
 	"net/http"
@@ -128,4 +129,37 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 	return f(r)
+}
+
+func TestHandlerInfersKeyMode(t *testing.T) {
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("ok")), Request: r}, nil
+	})
+
+	cases := []struct {
+		name string
+		auth string
+		want string
+	}{
+		{"bearer test", "Bearer sk_test_abc123", "test"},
+		{"bearer live", "Bearer sk_live_abc123", "live"},
+		{"restricted live", "Bearer rk_live_abc123", "live"},
+		{"basic test", "Basic " + base64.StdEncoding.EncodeToString([]byte("sk_test_abc:")), "test"},
+		{"unknown", "Bearer something_else", ""},
+		{"absent", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := make(chan Call, 1)
+			handler := Handler(calls, WithTarget("https://api.stripe.test"), WithTransport(rt))
+			req := httptest.NewRequest(http.MethodGet, "http://stripeek.test/v1/customers", nil)
+			if tc.auth != "" {
+				req.Header.Set("Authorization", tc.auth)
+			}
+			handler.ServeHTTP(httptest.NewRecorder(), req)
+			if got := (<-calls).KeyMode; got != tc.want {
+				t.Fatalf("KeyMode = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }

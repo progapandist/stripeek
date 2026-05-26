@@ -64,13 +64,21 @@ type jsonTree struct {
 	filter   string // query matched against key names
 
 	matchCache map[*jsonNode]bool // per-rebuild memo: node or a descendant matches
+
+	// rowPrefix[i] is the total rendered rows of visible[0:i] (len == len(visible)+1),
+	// so range/total row counts are O(1) lookups instead of re-rendering the tree
+	// on every keystroke. countWidth records the width it was built at; -1 forces
+	// a rebuild of the sums.
+	rowPrefix  []int
+	countWidth int
 }
 
 func (t *jsonTree) setCall(c proxy.Call) {
-	t.reqHeaders = headerRoot("request headers", c.RequestHeader)
-	t.reqBody = bodyRoot("request", c.ReqBody)
-	t.respHeaders = headerRoot("response headers", c.ResponseHeader)
-	t.respBody = bodyRoot("response", c.RespBody)
+	ctx := linkContext{mode: c.KeyMode}
+	t.reqHeaders = headerRoot("request headers", c.RequestHeader, ctx)
+	t.reqBody = bodyRoot("request", c.ReqBody, ctx)
+	t.respHeaders = headerRoot("response headers", c.ResponseHeader, ctx)
+	t.respBody = bodyRoot("response", c.RespBody, ctx)
 	t.assembleRoots()
 	t.cursor = 0
 	t.offset = 0
@@ -119,6 +127,8 @@ func (t *jsonTree) clear() {
 	t.typing = false
 	t.filterOn = false
 	t.filter = ""
+	t.rowPrefix = nil
+	t.countWidth = -1
 }
 
 // rebuild recomputes the flat list of visible lines from the root sections,
@@ -143,6 +153,7 @@ func (t *jsonTree) rebuild() {
 		t.cursor = 0
 	}
 	t.cursor = t.skipSepForward(t.cursor)
+	t.countWidth = -1 // visible set changed; row sums are stale
 	t.clampOffset()
 }
 
@@ -295,11 +306,32 @@ func (t *jsonTree) skipSepBackward(pos int) int {
 	return pos
 }
 
+// ensureCounts (re)builds the prefix sum of rendered rows when it is stale. It
+// renders each visible line once — the same cost as a single full draw — and is
+// triggered only by structural changes (rebuild) or a width change, never by
+// plain navigation, so jumping around a huge tree stays cheap.
+func (t *jsonTree) ensureCounts() {
+	if t.countWidth == t.width && len(t.rowPrefix) == len(t.visible)+1 {
+		return
+	}
+	if cap(t.rowPrefix) >= len(t.visible)+1 {
+		t.rowPrefix = t.rowPrefix[:len(t.visible)+1]
+	} else {
+		t.rowPrefix = make([]int, len(t.visible)+1)
+	}
+	t.rowPrefix[0] = 0
+	for i, vl := range t.visible {
+		t.rowPrefix[i+1] = t.rowPrefix[i] + max(1, len(t.renderLines(vl, false)))
+	}
+	t.countWidth = t.width
+}
+
 func (t *jsonTree) clampOffset() {
 	if len(t.visible) == 0 {
 		t.offset = 0
 		return
 	}
+	t.ensureCounts()
 	if t.offset >= len(t.visible) {
 		t.offset = len(t.visible) - 1
 	}
@@ -324,11 +356,13 @@ func (t *jsonTree) rowsBeforeCursor() int {
 }
 
 func (t *jsonTree) rowsBeforeCursorFrom(offset int) int {
-	rows := 0
-	for i := offset; i < t.cursor && i < len(t.visible); i++ {
-		rows += t.renderedLineCount(i)
+	t.ensureCounts()
+	offset = clampInt(offset, 0, len(t.visible))
+	cursor := clampInt(t.cursor, 0, len(t.visible))
+	if offset > cursor {
+		offset = cursor
 	}
-	return rows
+	return t.rowPrefix[cursor] - t.rowPrefix[offset]
 }
 
 func (t *jsonTree) cursorFitsFrom(offset int) bool {
@@ -339,11 +373,9 @@ func (t *jsonTree) cursorFitsFrom(offset int) bool {
 }
 
 func (t *jsonTree) renderedRowsFromOffset(offset int) int {
-	rows := 0
-	for i := offset; i < len(t.visible); i++ {
-		rows += t.renderedLineCount(i)
-	}
-	return rows
+	t.ensureCounts()
+	offset = clampInt(offset, 0, len(t.visible))
+	return t.rowPrefix[len(t.visible)] - t.rowPrefix[offset]
 }
 
 func (t *jsonTree) scrollbarMarks() []string {
@@ -376,18 +408,8 @@ func (t *jsonTree) scrollbarMarks() []string {
 }
 
 func (t *jsonTree) renderedRowsBeforeOffset() int {
-	rows := 0
-	for i := 0; i < t.offset && i < len(t.visible); i++ {
-		rows += t.renderedLineCount(i)
-	}
-	return rows
-}
-
-func (t *jsonTree) renderedLineCount(i int) int {
-	if i < 0 || i >= len(t.visible) {
-		return 0
-	}
-	return max(1, len(t.renderLines(t.visible[i], false)))
+	t.ensureCounts()
+	return t.rowPrefix[clampInt(t.offset, 0, len(t.visible))]
 }
 
 func (t *jsonTree) jumpToParent() {

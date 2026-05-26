@@ -15,7 +15,7 @@ import (
 
 // bodyRoot decodes a captured request or response body into a tree section
 // rooted at label. An empty body yields a single "(empty)" placeholder.
-func bodyRoot(label string, b []byte) *jsonNode {
+func bodyRoot(label string, b []byte, ctx linkContext) *jsonNode {
 	if len(b) == 0 {
 		return &jsonNode{
 			key:      label,
@@ -24,7 +24,7 @@ func bodyRoot(label string, b []byte) *jsonNode {
 			children: []*jsonNode{{kind: kindScalar, value: "(empty)", plainValue: "(empty)", scalarColor: colorNull}},
 		}
 	}
-	root := buildNode(label, decodeBody(b))
+	root := buildNode(label, decodeBody(b), ctx)
 	root.expanded = true
 	return root
 }
@@ -32,7 +32,7 @@ func bodyRoot(label string, b []byte) *jsonNode {
 // headerRoot builds a tree section from an HTTP header map. Single-valued
 // headers render as scalars, repeated headers as arrays. The whole section is
 // flagged header=true so rendering styles it apart from JSON payload fields.
-func headerRoot(label string, h http.Header) *jsonNode {
+func headerRoot(label string, h http.Header, ctx linkContext) *jsonNode {
 	if len(h) == 0 {
 		return &jsonNode{
 			key:      label,
@@ -46,7 +46,7 @@ func headerRoot(label string, h http.Header) *jsonNode {
 	for k, vs := range h {
 		m[k] = formValue(vs)
 	}
-	root := buildNode(label, m)
+	root := buildNode(label, m, ctx)
 	root.expanded = true
 	markHeader(root)
 	return root
@@ -129,18 +129,18 @@ func formValue(vs []string) any {
 }
 
 // buildNode recursively converts a decoded value into a tree node.
-func buildNode(key string, v any) *jsonNode {
+func buildNode(key string, v any, ctx linkContext) *jsonNode {
 	switch vv := v.(type) {
 	case map[string]any:
 		n := &jsonNode{key: key, kind: kindObject, expanded: true}
 		for _, k := range sortedKeys(vv) {
-			n.children = append(n.children, buildNode(k, vv[k]))
+			n.children = append(n.children, buildNode(k, vv[k], ctx))
 		}
 		return n
 	case []any:
 		n := &jsonNode{key: key, kind: kindArray, expanded: true}
 		for i, e := range vv {
-			n.children = append(n.children, buildNode(strconv.Itoa(i), e))
+			n.children = append(n.children, buildNode(strconv.Itoa(i), e, ctx))
 		}
 		return n
 	default:
@@ -156,7 +156,7 @@ func buildNode(key string, v any) *jsonNode {
 		}
 		// Wrap recognised Stripe IDs in a terminal OSC 8 hyperlink.
 		if s, ok := v.(string); ok {
-			if u := scalarURL(s); u != "" {
+			if u := scalarURL(s, ctx); u != "" {
 				n.linkURL = u
 				n.value = hyperlink(u, plain)
 			}

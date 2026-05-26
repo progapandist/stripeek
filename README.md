@@ -126,7 +126,9 @@ Omit the variable (or start the server normally) to talk to Stripe directly. Pro
 | `enter` | Show calls for selected group |
 | `esc` | Show all requests |
 
-Stripe object IDs in the inspector are rendered as clickable hyperlinks to the Stripe Dashboard (requires a terminal with OSC 8 support — iTerm2, WezTerm, Kitty).
+The inspector header shows a `TEST` / `LIVE` badge for each call, inferred from the API key prefix (the key itself is never stored).
+
+Stripe object IDs in the inspector are rendered as clickable hyperlinks to the Stripe Dashboard (requires a terminal with OSC 8 support — iTerm2, WezTerm, Kitty). Links follow the call's mode, so a live request opens the live dashboard instead of the test one.
 
 ## Configuration
 

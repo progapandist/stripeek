@@ -78,6 +78,11 @@ var (
 
 	styleMethodSafe  = lipgloss.NewStyle().Bold(true).Foreground(colMethodSafe)
 	styleMethodWrite = lipgloss.NewStyle().Bold(true).Foreground(colMethodWrite)
+
+	// Account context badges: test reads cool/benign, live runs warm to flag
+	// that requests are touching real data.
+	styleModeTest = lipgloss.NewStyle().Bold(true).Foreground(colMethodSafe)
+	styleModeLive = lipgloss.NewStyle().Bold(true).Foreground(colMethodWrite)
 )
 
 // safeMethods are the HTTP methods with no side effects (RFC 9110 §9.2.1).

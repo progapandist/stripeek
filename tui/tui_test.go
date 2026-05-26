@@ -870,7 +870,7 @@ func TestInspectorTogglesHeaderSections(t *testing.T) {
 }
 
 func TestHeaderNodesAreFlaggedForStyling(t *testing.T) {
-	root := headerRoot("request headers", http.Header{"Content-Type": {"application/json"}})
+	root := headerRoot("request headers", http.Header{"Content-Type": {"application/json"}}, linkContext{})
 	if !root.header {
 		t.Fatal("header root not flagged")
 	}
@@ -956,5 +956,96 @@ func TestMethodStyleSeparatesMutating(t *testing.T) {
 		if got := methodStyle(m).GetForeground(); got != write {
 			t.Fatalf("%q classified as safe, want mutating", m)
 		}
+	}
+}
+
+func TestStripeIDURLUsesMode(t *testing.T) {
+	cases := []struct {
+		name string
+		id   string
+		ctx  linkContext
+		want string
+	}{
+		{"test", "sub_123", linkContext{mode: "test"}, "https://dashboard.stripe.com/test/subscriptions/sub_123"},
+		{"live", "sub_123", linkContext{mode: "live"}, "https://dashboard.stripe.com/subscriptions/sub_123"},
+		{"unknown defaults to test", "cus_9", linkContext{}, "https://dashboard.stripe.com/test/customers/cus_9"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := stripeIDURL(tc.id, tc.ctx); got != tc.want {
+				t.Fatalf("stripeIDURL = %q, want %q", got, tc.want)
+			}
+		})
+	}
+	if got := scalarURL("https://already.url/x", linkContext{mode: "live"}); got != "https://already.url/x" {
+		t.Fatalf("scalarURL should pass URLs through, got %q", got)
+	}
+}
+
+func TestInspectorSurfacesModeBadge(t *testing.T) {
+	c := sampleCall()
+	c.KeyMode = "live"
+	m := drive(New(), tea.WindowSizeMsg{Width: 100, Height: 30}, NewCallMsg(c))
+	view := m.View()
+	if !strings.Contains(view, "LIVE") {
+		t.Fatalf("inspector header missing LIVE badge:\n%s", view)
+	}
+
+	// The live customer link in the payload must drop the test segment.
+	if !strings.Contains(view, "\x1b]8;;https://dashboard.stripe.com/customers/cus_123") {
+		t.Fatalf("payload link did not use live mode:\n%s", view)
+	}
+
+	if badge := modeBadge(""); badge != "" {
+		t.Fatalf("modeBadge with unknown mode = %q, want empty", badge)
+	}
+}
+
+func TestInspectorJumpToBottomLargeTreeIsResponsive(t *testing.T) {
+	// A big response payload: pre-fix this jump was O(N^2) full re-renders and
+	// would hang. Guard that it completes quickly and lands on the last field.
+	body := numberObject("field_", 6000)
+	tree := jsonTree{width: 60, height: 30, focused: true}
+	tree.setCall(proxy.Call{ReqBody: []byte("{}"), RespBody: []byte(body)})
+
+	done := make(chan struct{})
+	go func() {
+		tree.Update(key("b")) // jump to bottom
+		_ = tree.View()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("jump-to-bottom did not complete within 2s (perf regression)")
+	}
+
+	wantCursor := tree.skipSepBackward(len(tree.visible) - 1)
+	if tree.cursor != wantCursor {
+		t.Fatalf("cursor = %d, want last visible row %d", tree.cursor, wantCursor)
+	}
+	last := tree.visible[tree.cursor].node
+	if last == nil || !strings.Contains(tree.View(), last.key) {
+		t.Fatalf("last field %q not visible after jump:\n%s", lastKey(last), tree.View())
+	}
+}
+
+func lastKey(n *jsonNode) string {
+	if n == nil {
+		return "<nil>"
+	}
+	return n.key
+}
+
+func BenchmarkInspectorJumpToBottom(b *testing.B) {
+	body := numberObject("field_", 6000)
+	tree := jsonTree{width: 60, height: 30, focused: true}
+	tree.setCall(proxy.Call{ReqBody: []byte("{}"), RespBody: []byte(body)})
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tree.Update(key("t")) // top
+		tree.Update(key("b")) // bottom
 	}
 }

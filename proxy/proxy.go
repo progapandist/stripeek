@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"io"
 	"net/http"
@@ -48,6 +49,7 @@ type Call struct {
 	StripeRequestID   string
 	IdempotencyKey    string
 	StripeAccount     string
+	KeyMode           string // "test" or "live", inferred from the API key prefix
 	ReqBody           []byte
 	ReqBodyTruncated  bool
 	Status            int
@@ -138,6 +140,7 @@ func Handler(calls chan<- Call, opts ...Option) http.Handler {
 			RequestHeader:   redactedHeader(r.Header),
 			IdempotencyKey:  r.Header.Get("Idempotency-Key"),
 			StripeAccount:   r.Header.Get("Stripe-Account"),
+			KeyMode:         keyMode(r.Header.Get("Authorization")),
 			ResponseHeader:  http.Header{},
 			StripeRequestID: "",
 		}
@@ -184,6 +187,27 @@ func Handler(calls chan<- Call, opts ...Option) http.Handler {
 		default:
 		}
 	})
+}
+
+// keyMode infers "test" or "live" from a Stripe API key in the Authorization
+// header without retaining the secret itself. Stripe accepts the key either as
+// a bearer token ("Bearer sk_test_…") or as the HTTP Basic username
+// ("Basic base64(sk_live_…:)"); the mode is the segment after the key kind
+// (sk_<mode>_…, rk_<mode>_…). Returns "" when the mode can't be determined.
+func keyMode(auth string) string {
+	key := ""
+	if rest, ok := strings.CutPrefix(auth, "Bearer "); ok {
+		key = strings.TrimSpace(rest)
+	} else if rest, ok := strings.CutPrefix(auth, "Basic "); ok {
+		if dec, err := base64.StdEncoding.DecodeString(strings.TrimSpace(rest)); err == nil {
+			key, _, _ = strings.Cut(string(dec), ":")
+		}
+	}
+	parts := strings.SplitN(key, "_", 3)
+	if len(parts) >= 2 && (parts[1] == "test" || parts[1] == "live") {
+		return parts[1]
+	}
+	return ""
 }
 
 func redactedHeader(h http.Header) http.Header {
