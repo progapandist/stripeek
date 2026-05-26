@@ -321,7 +321,7 @@ func (t *jsonTree) ensureCounts() {
 	}
 	t.rowPrefix[0] = 0
 	for i, vl := range t.visible {
-		t.rowPrefix[i+1] = t.rowPrefix[i] + max(1, len(t.renderLines(vl, false)))
+		t.rowPrefix[i+1] = t.rowPrefix[i] + t.lineRows(vl)
 	}
 	t.countWidth = t.width
 }

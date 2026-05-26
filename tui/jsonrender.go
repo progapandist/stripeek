@@ -164,6 +164,45 @@ func (t *jsonTree) wrapScalarLines(prefix string, value string, valueStyle lipgl
 	return lines
 }
 
+// lineRows reports how many terminal rows a visible line occupies, mirroring
+// renderLines' wrapping decision but without building styled strings — so the
+// row-count cache can be rebuilt cheaply across a huge tree. Everything is a
+// single row except a scalar whose value overflows the pane width.
+func (t *jsonTree) lineRows(vl *visibleLine) int {
+	if vl.isSep || vl.node == nil {
+		return 1
+	}
+	n := vl.node
+	if vl.depth == 0 || n.kind != kindScalar {
+		return 1
+	}
+	prefixWidth := 2*vl.depth + 2 + lipgloss.Width(n.key) // indent + marker + key
+	if n.key != "" {
+		prefixWidth += 2 // ": "
+	}
+	if prefixWidth+lipgloss.Width(n.value)+lipgloss.Width(n.suffix) <= t.width {
+		return 1
+	}
+	return t.scalarRows(prefixWidth, n.plainValue+n.suffix)
+}
+
+// scalarRows counts the rows wrapScalarLines would emit for a value, matching
+// its prefix/continuation math.
+func (t *jsonTree) scalarRows(prefixWidth int, value string) int {
+	if t.width <= 0 {
+		return 1
+	}
+	baseIndent := min(prefixWidth, max(0, t.width-1))
+	extra := 0
+	if prefixWidth >= t.width {
+		extra = 1
+		prefixWidth = baseIndent
+	}
+	firstWidth := max(1, t.width-prefixWidth)
+	restWidth := max(1, t.width-baseIndent)
+	return extra + max(1, wrapCount(value, firstWidth, restWidth))
+}
+
 func wrapText(s string, firstWidth, restWidth int) []string {
 	if s == "" {
 		return nil
@@ -171,17 +210,52 @@ func wrapText(s string, firstWidth, restWidth int) []string {
 	width := max(1, firstWidth)
 	chunks := []string{}
 	var b strings.Builder
+	cur := 0 // display width accumulated in b; tracked incrementally to stay O(len)
 	for _, r := range s {
-		next := b.String() + string(r)
-		if b.Len() > 0 && lipgloss.Width(next) > width {
+		rw := runeWidth(r)
+		if b.Len() > 0 && cur+rw > width {
 			chunks = append(chunks, b.String())
 			b.Reset()
+			cur = 0
 			width = max(1, restWidth)
 		}
 		b.WriteRune(r)
+		cur += rw
 	}
 	if b.Len() > 0 {
 		chunks = append(chunks, b.String())
 	}
 	return chunks
+}
+
+// wrapCount returns how many lines wrapText would produce, without allocating
+// the chunk strings — used by the row-count cache over large trees.
+func wrapCount(s string, firstWidth, restWidth int) int {
+	if s == "" {
+		return 0
+	}
+	width := max(1, firstWidth)
+	count, cur := 0, 0
+	for _, r := range s {
+		rw := runeWidth(r)
+		if cur > 0 && cur+rw > width {
+			count++
+			cur = 0
+			width = max(1, restWidth)
+		}
+		cur += rw
+	}
+	if cur > 0 {
+		count++
+	}
+	return count
+}
+
+// runeWidth is a fast display-width for a single rune: printable ASCII is always
+// one column, and only non-ASCII falls back to the (costlier) ansi-aware width.
+func runeWidth(r rune) int {
+	if r >= 0x20 && r < 0x7f {
+		return 1
+	}
+	return lipgloss.Width(string(r))
 }

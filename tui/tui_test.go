@@ -1049,3 +1049,51 @@ func BenchmarkInspectorJumpToBottom(b *testing.B) {
 		tree.Update(key("b")) // bottom
 	}
 }
+
+func TestLineRowsMatchesRenderLines(t *testing.T) {
+	longVal := strings.Repeat("x", 300)
+	url := "https://dashboard.stripe.com/test/invoices/in_" + strings.Repeat("A", 120)
+	body := `{"short":"ok","empty":"","num":2499,"nested":{"a":1,"b":[1,2,3]},` +
+		`"long":"` + longVal + `","url":"` + url + `","bool":true,"nil":null}`
+
+	tree := jsonTree{width: 32, height: 40, focused: true}
+	tree.setCall(proxy.Call{ReqBody: []byte("{}"), RespBody: []byte(body)})
+
+	for i, vl := range tree.visible {
+		want := max(1, len(tree.renderLines(vl, false)))
+		if got := tree.lineRows(vl); got != want {
+			t.Fatalf("line %d (%+v): lineRows=%d, renderLines=%d", i, vl.node, got, want)
+		}
+	}
+}
+
+func TestInspectorLongValuesStayResponsive(t *testing.T) {
+	// Invoice-like payload with many long string values; the old O(L^2) wrap
+	// inside a full-tree count made this hang.
+	var b strings.Builder
+	b.WriteString(`{"data":[`)
+	for i := 0; i < 200; i++ {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, `{"id":"in_%d","url":%q,"description":%q}`,
+			i, "https://invoice.stripe.com/i/acct_X/"+strings.Repeat("Z", 200),
+			strings.Repeat("long description text ", 30))
+	}
+	b.WriteString(`]}`)
+
+	tree := jsonTree{width: 50, height: 30, focused: true}
+
+	done := make(chan struct{})
+	go func() {
+		tree.setCall(proxy.Call{ReqBody: []byte("{}"), RespBody: []byte(b.String())})
+		tree.Update(key("b"))
+		_ = tree.View()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("long-value payload did not render within 3s (perf regression)")
+	}
+}
