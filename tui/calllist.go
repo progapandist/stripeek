@@ -18,25 +18,83 @@ type callItem struct {
 	id   uint64
 }
 
-func (c callItem) Title() string { return c.title() }
+func (c callItem) FilterValue() string { return callDisplayPath(c.call) }
 
-func (c callItem) title() string {
-	status := styleOK.Render(fmt.Sprintf("%d", c.call.Status))
+func (c callItem) statusToken(selected bool) string {
+	sty := styleOK
 	if c.call.Status >= 400 {
-		status = styleErr.Render(fmt.Sprintf("%d", c.call.Status))
+		sty = styleErr
 	}
-	return fmt.Sprintf("%s %s %s", c.call.Method, callDisplayPath(c.call), status)
+	if selected {
+		sty = sty.Bold(true)
+	}
+	return sty.Render(fmt.Sprintf("%d", c.call.Status))
 }
 
-func (c callItem) Description() string { return c.description() }
-
-func (c callItem) description() string {
+func (c callItem) timeLatency() string {
 	return styleDim.Render(fmt.Sprintf("%s  %dms",
 		c.call.Time.Format("15:04:05 MST"),
 		c.call.Latency.Milliseconds()))
 }
 
-func (c callItem) FilterValue() string { return callDisplayPath(c.call) }
+// renderRows lays a call out over the delegate's two rows: "METHOD path STATUS"
+// on top, "time latency" below. Long paths are middle-truncated so the method
+// and status stay visible and the metadata keeps its own dedicated line.
+func (c callItem) renderRows(contentW int, selected bool) (string, string) {
+	methodSty := methodStyle(c.call.Method)
+	pathSty := lipgloss.NewStyle()
+	if selected {
+		methodSty = methodSty.Bold(true)
+		pathSty = pathSty.Bold(true)
+	}
+	method := methodSty.Render(c.call.Method)
+	status := c.statusToken(selected)
+
+	prefixW := lipgloss.Width(method) + 1 // method + separating space
+	statusW := lipgloss.Width(status) + 1 // separating space + status
+	availPath := max(1, contentW-prefixW-statusW)
+
+	path := truncateMiddle(callDisplayPath(c.call), availPath)
+	top := method + " " + pathSty.Render(path) + " " + status
+	return fitLine(top, contentW), fitLine(c.timeLatency(), contentW)
+}
+
+// truncateMiddle shortens s to fit width display columns, replacing the middle
+// with an ellipsis so both the leading resource and trailing query survive.
+func truncateMiddle(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= width {
+		return s
+	}
+	if width == 1 {
+		return "…"
+	}
+	avail := width - 1 // reserve a column for the ellipsis
+	leftW := avail / 2
+	left := s[:fittingPrefix(s, leftW)]
+	return left + "…" + suffixWithin(s, avail-leftW)
+}
+
+// suffixWithin returns the longest trailing run of s that fits in width columns.
+func suffixWithin(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	cols := 0
+	i := len(runes)
+	for i > 0 {
+		w := lipgloss.Width(string(runes[i-1]))
+		if cols+w > width {
+			break
+		}
+		cols += w
+		i--
+	}
+	return string(runes[i:])
+}
 
 // callDelegate renders each call as a two-line entry with a group/selection
 // border in the gutter.
@@ -55,16 +113,10 @@ func (callDelegate) Render(w io.Writer, m list.Model, index int, item list.Item)
 	selected := index == m.Index()
 	border := callBorder(c.call.Group, false)
 	selectedBorder := callBorder(c.call.Group, selected)
-	title := c.title()
-	desc := c.description()
-	if selected {
-		title = lipgloss.NewStyle().Bold(true).Render(title)
-	}
 
 	contentW := max(1, m.Width()-2)
-	title = fitLine(title, contentW)
-	desc = fitLine(desc, contentW)
-	_, _ = fmt.Fprintf(w, "%s %s\n%s %s", selectedBorder, title, border, desc)
+	top, bottom := c.renderRows(contentW, selected)
+	_, _ = fmt.Fprintf(w, "%s %s\n%s %s", selectedBorder, top, border, bottom)
 }
 
 func callBorder(group *proxy.Group, selected bool) string {

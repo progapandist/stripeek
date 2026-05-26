@@ -1,6 +1,10 @@
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 // This file is the single source of truth for the TUI's look: the color
 // palette and every lipgloss style derived from it. Keeping it isolated means
@@ -44,6 +48,11 @@ var (
 	// set apart from JSON payload fields when shown in the same tree.
 	colHeaderKey = adaptive("#0e7490", "#5eead4") // header name / section (teal)
 	colHeaderVal = adaptive("#0f766e", "#67c9be") // header value (muted teal)
+
+	// HTTP method classes: safe/read methods stay cool, mutating ones run warm
+	// so a glance down the Calls list separates reads from writes.
+	colMethodSafe  = adaptive("#0e7490", "#67e8f9") // GET/HEAD/OPTIONS/TRACE (cyan)
+	colMethodWrite = adaptive("#c2410c", "#fb923c") // POST/PUT/PATCH/DELETE/… (amber)
 )
 
 // Shared text styles.
@@ -66,7 +75,23 @@ var (
 	styleAccentBlock = lipgloss.NewStyle().Background(colAccent)
 	styleScrollTrack = lipgloss.NewStyle().Foreground(colFaint)
 	styleScrollThumb = lipgloss.NewStyle().Foreground(colAccent)
+
+	styleMethodSafe  = lipgloss.NewStyle().Bold(true).Foreground(colMethodSafe)
+	styleMethodWrite = lipgloss.NewStyle().Bold(true).Foreground(colMethodWrite)
 )
+
+// safeMethods are the HTTP methods with no side effects (RFC 9110 §9.2.1).
+var safeMethods = map[string]struct{}{
+	"GET": {}, "HEAD": {}, "OPTIONS": {}, "TRACE": {},
+}
+
+// methodStyle colors an HTTP method by whether it mutates server state.
+func methodStyle(method string) lipgloss.Style {
+	if _, ok := safeMethods[strings.ToUpper(method)]; ok {
+		return styleMethodSafe
+	}
+	return styleMethodWrite
+}
 
 // Inspector JSON tree.
 var (

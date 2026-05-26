@@ -881,3 +881,80 @@ func TestHeaderNodesAreFlaggedForStyling(t *testing.T) {
 		t.Fatalf("header value color = %v, want colorHeaderValue", got)
 	}
 }
+
+func TestCallRowKeepsStatusVisibleForLongPath(t *testing.T) {
+	long := proxy.Call{
+		Method:     "GET",
+		RequestURI: "/v1/invoices?customer=cus_Ua1Uul5z3jvPFQ&subscription=sub_1TarRPB3ZHLBhbGBcJRIeLSg",
+		Status:     200,
+		Latency:    477 * time.Millisecond,
+		Time:       time.Date(2026, 5, 26, 7, 53, 0, 0, time.UTC),
+	}
+	item := callItem{call: long}
+	top, bottom := item.renderRows(48, false)
+
+	if lipgloss.Width(top) > 48 || lipgloss.Width(bottom) > 48 {
+		t.Fatalf("rows exceed width:\n%q\n%q", top, bottom)
+	}
+	// Status stays on the top row; latency keeps its own metadata row.
+	if !strings.Contains(top, "200") {
+		t.Fatalf("top row lost status:\n%q", top)
+	}
+	if !strings.Contains(bottom, "477ms") || strings.Contains(bottom, "200") {
+		t.Fatalf("metadata row should hold only time/latency:\n%q", bottom)
+	}
+	// Middle truncation keeps the leading resource and the trailing query.
+	if !strings.Contains(top, "/v1/invoices") || !strings.Contains(top, "…") || !strings.Contains(top, "RIeLSg") {
+		t.Fatalf("top row did not middle-truncate the path:\n%q", top)
+	}
+}
+
+func TestTruncateMiddleKeepsEnds(t *testing.T) {
+	got := truncateMiddle("/v1/customers/cus_ABCDEFGHIJKLMNOP/sources", 20)
+	if lipgloss.Width(got) > 20 {
+		t.Fatalf("truncated wider than 20: %q (%d)", got, lipgloss.Width(got))
+	}
+	if !strings.HasPrefix(got, "/v1/") || !strings.HasSuffix(got, "sources") || !strings.Contains(got, "…") {
+		t.Fatalf("middle truncation lost an end: %q", got)
+	}
+	if short := truncateMiddle("/v1/ok", 20); short != "/v1/ok" {
+		t.Fatalf("fitting string should pass through unchanged, got %q", short)
+	}
+}
+
+func TestCallRowShortPathKeepsStatusOnTop(t *testing.T) {
+	item := callItem{call: proxy.Call{
+		Method:     "GET",
+		RequestURI: "/v1/customers",
+		Status:     404,
+		Latency:    12 * time.Millisecond,
+		Time:       time.Date(2026, 5, 26, 7, 53, 0, 0, time.UTC),
+	}}
+	top, bottom := item.renderRows(60, false)
+	if !strings.Contains(top, "404") {
+		t.Fatalf("short path should keep status on top row:\n%q", top)
+	}
+	if strings.Contains(bottom, "404") {
+		t.Fatalf("status should not also appear on metadata row:\n%q", bottom)
+	}
+}
+
+func TestMethodStyleSeparatesMutating(t *testing.T) {
+	// lipgloss strips color outside a TTY, so compare the configured foreground
+	// rather than rendered output.
+	safe := styleMethodSafe.GetForeground()
+	write := styleMethodWrite.GetForeground()
+	if safe == write {
+		t.Fatal("safe and mutating methods must use distinct colors")
+	}
+	for _, m := range []string{"GET", "HEAD", "OPTIONS", "TRACE", "get"} {
+		if got := methodStyle(m).GetForeground(); got != safe {
+			t.Fatalf("%q classified as mutating, want safe", m)
+		}
+	}
+	for _, m := range []string{"POST", "PUT", "PATCH", "DELETE", "WEIRD"} {
+		if got := methodStyle(m).GetForeground(); got != write {
+			t.Fatalf("%q classified as safe, want mutating", m)
+		}
+	}
+}
