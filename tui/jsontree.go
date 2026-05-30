@@ -187,19 +187,14 @@ func (t *jsonTree) Update(msg tea.Msg) {
 	// While typing a key filter, every rune feeds the query so the view
 	// narrows live. enter applies and exits typing; esc cancels the filter.
 	if t.typing {
-		switch km.String() {
-		case "esc":
-			t.clearFilter()
-		case "enter":
+		next, action := editFilterQuery(t.filter, km)
+		switch action {
+		case editCommit:
 			t.typing = false
-		case "backspace", "ctrl+h":
-			if r := []rune(t.filter); len(r) > 0 {
-				t.setFilter(string(r[:len(r)-1]))
-			}
-		default:
-			if km.Type == tea.KeyRunes {
-				t.setFilter(t.filter + string(km.Runes))
-			}
+		case editCancel:
+			t.clearFilter()
+		case editChange:
+			t.setFilter(next)
 		}
 		return
 	}

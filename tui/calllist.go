@@ -141,30 +141,23 @@ func callDisplayPath(c proxy.Call) string {
 
 func (m *Model) updateList(msg tea.KeyMsg) tea.Cmd {
 	if m.filtering {
-		switch msg.String() {
-		case "enter":
+		next, action := editFilterQuery(m.filter, msg)
+		switch action {
+		case editCommit:
 			m.filtering = false
-		case "esc":
+		case editCancel:
 			m.filtering = false
 			m.filter = ""
 			m.rebuildList()
-		case "backspace", "ctrl+h":
-			runes := []rune(m.filter)
-			if len(runes) > 0 {
-				m.filter = string(runes[:len(runes)-1])
-				m.rebuildList()
-			}
-		default:
-			if msg.Type == tea.KeyRunes {
-				m.filter += string(msg.Runes)
-				m.rebuildList()
-			}
+		case editChange:
+			m.filter = next
+			m.rebuildList()
 		}
 		return nil
 	}
 
-	switch msg.String() {
-	case "enter":
+	switch {
+	case matches(msg, keyInspect):
 		m.syncTree()
 		if m.hasSel {
 			m.focused = focusDetail
@@ -172,41 +165,42 @@ func (m *Model) updateList(msg tea.KeyMsg) tea.Cmd {
 			m.tree.focused = true
 		}
 		return nil
-	case "/":
+	case matches(msg, keyFilter):
 		m.filtering = true
 		return nil
-	case "ctrl+g", "cmd+g":
+	case matches(msg, keyNewGroup):
 		m.startGroup()
 		return nil
-	case "g":
+	case matches(msg, keyToggleGroups):
 		m.toggleGroups()
 		return nil
-	case "esc":
+	case matches(msg, keyDismiss):
 		if m.filter != "" {
 			m.filter = ""
 			m.rebuildList()
 		}
 		return nil
-	case "t", "home":
+	case matches(msg, keyTop):
 		m.moveListTo(0)
 		return nil
-	case "b", "end":
+	case matches(msg, keyBottom):
 		m.moveListTo(len(m.list.Items()) - 1)
 		return nil
-	case "pgdown", "ctrl+f":
+	case matches(msg, keyPageDn):
 		m.moveListBy(m.listFullPageStep())
 		return nil
-	case "pgup", "ctrl+b":
+	case matches(msg, keyPageUp):
 		m.moveListBy(-m.listFullPageStep())
 		return nil
-	case "ctrl+d":
+	case matches(msg, keyHalfDn):
 		m.moveListBy(m.listHalfPageStep())
 		return nil
-	case "ctrl+u":
+	case matches(msg, keyHalfUp):
 		m.moveListBy(-m.listHalfPageStep())
 		return nil
 	}
 
+	// up/down/j/k and other navigation fall through to the bubbles list.
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
 	m.syncTree()
@@ -296,18 +290,27 @@ func (m Model) filterBar() string {
 func (m Model) callCountLine() string {
 	shown := len(m.list.Items())
 	total := len(m.allCalls)
-	progress := m.callProgressLabel()
+	suffix := m.callProgressLabel() + m.droppedLabel()
 	if m.groupFilterID != "" {
 		label := m.groupLabel(m.groupFilterID)
 		if m.filter != "" {
-			return styleDim.Render(fmt.Sprintf("%d of %d in %s", shown, m.groupCount(m.groupFilterID), label)) + progress
+			return styleDim.Render(fmt.Sprintf("%d of %d in %s", shown, m.groupCount(m.groupFilterID), label)) + suffix
 		}
-		return styleDim.Render(fmt.Sprintf("%d in %s", shown, label)) + progress
+		return styleDim.Render(fmt.Sprintf("%d in %s", shown, label)) + suffix
 	}
 	if m.filter != "" {
-		return styleDim.Render(fmt.Sprintf("%d of %d requests", shown, total)) + progress
+		return styleDim.Render(fmt.Sprintf("%d of %d requests", shown, total)) + suffix
 	}
-	return styleDim.Render(fmt.Sprintf("%d requests", shown)) + progress
+	return styleDim.Render(fmt.Sprintf("%d requests", shown)) + suffix
+}
+
+// droppedLabel warns when the proxy outran the TUI and shed captures. Empty in
+// the normal case so it never disturbs the count line.
+func (m Model) droppedLabel() string {
+	if m.dropped <= 0 {
+		return ""
+	}
+	return styleErr.Render(fmt.Sprintf("   ⚠ %d dropped", m.dropped))
 }
 
 func (m Model) callProgressLabel() string {

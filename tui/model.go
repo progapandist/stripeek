@@ -34,6 +34,10 @@ func (f focusZone) String() string {
 // NewCallMsg carries a newly captured call into the TUI.
 type NewCallMsg proxy.Call
 
+// DroppedMsg reports the running total of captures dropped because the TUI
+// couldn't keep up with the proxy.
+type DroppedMsg int
+
 // Model is the root Bubble Tea model.
 type Model struct {
 	list          list.Model
@@ -55,6 +59,7 @@ type Model struct {
 	groupFilterID string
 	groups        []groupEntry
 	shortcuts     bool
+	dropped       int    // captures lost because the TUI fell behind the proxy
 	OnClear       func() // called after in-memory history is wiped
 }
 
@@ -107,62 +112,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.layout()
 
 	case tea.KeyMsg:
-		// ctrl+c always quits; q quits unless the user is typing (list filter
-		// or inspector key search).
-		switch msg.String() {
-		case "ctrl+c":
+		cmd, handled, quit := m.handleGlobalKey(msg)
+		switch {
+		case quit:
 			return m, tea.Quit
-		case "?", "esc":
-			if m.shortcuts {
-				m.shortcuts = false
-				return m, nil
-			}
-		case "q":
-			if !m.inputActive() {
-				return m, tea.Quit
-			}
+		case handled:
+			return m, cmd
 		}
-		if msg.String() == "?" && !m.inputActive() {
-			m.shortcuts = true
-			return m, nil
-		}
-		// Tab always switches panes/sections, cancelling any in-progress text input.
-		if msg.String() == "tab" || msg.String() == "shift+tab" {
-			m.advanceFocus(msg.String() == "shift+tab")
-			m.tree.focused = m.focused == focusDetail
-			m.layout()
-			return m, nil
-		}
-		if m.shortcuts {
-			return m, nil
-		}
-		if (msg.String() == "ctrl+g" || msg.String() == "cmd+g") && !m.inputActive() {
-			m.startGroup()
-			m.tree.focused = m.focused == focusDetail
-			return m, nil
-		}
-		if msg.String() == "ctrl+x" && !m.inputActive() {
-			m.clearHistory()
-			return m, nil
-		}
-		// esc in the inspector returns to the list, unless a key filter is
-		// active (then esc clears the filter — handled by the tree).
-		if m.focused == focusDetail && msg.String() == "esc" && !m.tree.typing && !m.tree.filterOn {
-			m.focused = focusList
-			m.tree.focused = false
-			return m, nil
-		}
-
-		switch m.focused {
-		case focusList:
-			cmd = m.updateList(msg)
-		case focusGroups:
-			m.updateGroups(msg)
-		default:
-			m.tree.Update(msg)
-			m.layout()
-		}
-		return m, cmd
+		return m, m.routeKey(msg)
 
 	case NewCallMsg:
 		followTop := len(m.list.Items()) == 0 || m.list.Index() == 0
@@ -182,9 +139,71 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncTree()
 		}
 		return m, nil
+
+	case DroppedMsg:
+		m.dropped = int(msg)
+		return m, nil
 	}
 
 	return m, cmd
+}
+
+// handleGlobalKey processes shortcuts that apply regardless of the focused pane
+// and reports whether it consumed the key (handled) and whether the program
+// should quit. The case order is significant: it mirrors the original precedence
+// so that, for example, q quits even while the shortcuts overlay is open, and
+// tab still switches panes with the overlay up.
+func (m *Model) handleGlobalKey(msg tea.KeyMsg) (cmd tea.Cmd, handled, quit bool) {
+	switch {
+	case matches(msg, keyForceQuit):
+		return nil, true, true
+	case m.shortcuts && (matches(msg, keyShortcuts) || matches(msg, keyDismiss)):
+		m.shortcuts = false
+		return nil, true, false
+	case matches(msg, keyQuit) && !m.inputActive():
+		// q quits unless the user is typing (list filter or inspector search).
+		return nil, true, true
+	case matches(msg, keyShortcuts) && !m.inputActive():
+		m.shortcuts = true
+		return nil, true, false
+	case matches(msg, keyNextPane) || matches(msg, keyPrevPane):
+		// Tab switches panes/sections, cancelling any in-progress text input.
+		m.advanceFocus(matches(msg, keyPrevPane))
+		m.tree.focused = m.focused == focusDetail
+		m.layout()
+		return nil, true, false
+	case m.shortcuts:
+		// Overlay open: swallow every remaining key.
+		return nil, true, false
+	case matches(msg, keyNewGroup) && !m.inputActive():
+		m.startGroup()
+		m.tree.focused = m.focused == focusDetail
+		return nil, true, false
+	case matches(msg, keyClearHistory) && !m.inputActive():
+		m.clearHistory()
+		return nil, true, false
+	case m.focused == focusDetail && matches(msg, keyDismiss) && !m.tree.typing && !m.tree.filterOn:
+		// esc in the inspector returns to the list, unless a key filter is active
+		// (then esc clears the filter — handled by the tree).
+		m.focused = focusList
+		m.tree.focused = false
+		return nil, true, false
+	}
+	return nil, false, false
+}
+
+// routeKey dispatches a key the global handler didn't consume to the focused pane.
+func (m *Model) routeKey(msg tea.KeyMsg) tea.Cmd {
+	switch m.focused {
+	case focusList:
+		return m.updateList(msg)
+	case focusGroups:
+		m.updateGroups(msg)
+	default:
+		m.tree.Update(msg)
+		m.layout()
+	}
+	return nil
 }
 
 func (m *Model) prependCall(call proxy.Call) {

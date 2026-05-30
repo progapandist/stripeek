@@ -19,23 +19,23 @@ type groupEntry struct {
 }
 
 func (m *Model) updateGroups(msg tea.KeyMsg) {
-	switch msg.String() {
-	case "up", "k":
+	switch {
+	case matches(msg, keyUp):
 		m.moveGroup(-1)
-	case "down", "j":
+	case matches(msg, keyDown):
 		m.moveGroup(1)
-	case "enter":
+	case matches(msg, keyInspect):
 		m.applyGroupCursor()
 		m.focused = focusList
 		m.tree.focused = false
-	case "esc":
+	case matches(msg, keyDismiss):
 		m.groupFilterID = ""
 		m.groupCursor = 0
 		m.focused = focusList
 		m.rebuildList()
-	case "g":
+	case matches(msg, keyToggleGroups):
 		m.toggleGroups()
-	case "ctrl+g", "cmd+g":
+	case matches(msg, keyNewGroup):
 		m.startGroup()
 	}
 }
@@ -90,11 +90,9 @@ func (m *Model) applyGroupCursor() {
 }
 
 func (m *Model) selectGroup(id string) {
-	for i, g := range m.groups {
-		if g.group != nil && g.group.ID == id {
-			m.groupCursor = i
-			return
-		}
+	if i, _, ok := m.findGroup(id); ok {
+		m.groupCursor = i
+		return
 	}
 	m.groupCursor = 0
 }
@@ -170,7 +168,7 @@ func (m Model) groupLines(width, height int) []string {
 			line += styleFaint.Render("  selected")
 		}
 		if cursor {
-			line = styleCursor.Width(width).Render(stripANSIForCursor(name, entry.count))
+			line = styleCursor.Width(width).Render(groupRowText(name, entry.count))
 		}
 		lines = append(lines, fitLine(line, width))
 	}
@@ -180,24 +178,33 @@ func (m Model) groupLines(width, height int) []string {
 	return lines
 }
 
-func stripANSIForCursor(name string, count int) string {
+// groupRowText is the unstyled "name  count" used when the cursor highlight
+// owns the whole row's styling (lipgloss can't restyle text that already carries
+// per-segment ANSI).
+func groupRowText(name string, count int) string {
 	return fmt.Sprintf("%s  %d", name, count)
 }
 
-func (m Model) groupLabel(id string) string {
-	for _, g := range m.groups {
+// findGroup returns the navigator row for the group with the given ID.
+func (m Model) findGroup(id string) (int, groupEntry, bool) {
+	for i, g := range m.groups {
 		if g.group != nil && g.group.ID == id {
-			return g.group.Name
+			return i, g, true
 		}
+	}
+	return -1, groupEntry{}, false
+}
+
+func (m Model) groupLabel(id string) string {
+	if _, g, ok := m.findGroup(id); ok {
+		return g.group.Name
 	}
 	return "group"
 }
 
 func (m Model) groupCount(id string) int {
-	for _, g := range m.groups {
-		if g.group != nil && g.group.ID == id {
-			return g.count
-		}
+	if _, g, ok := m.findGroup(id); ok {
+		return g.count
 	}
 	return 0
 }

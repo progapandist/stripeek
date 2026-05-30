@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -46,9 +47,10 @@ func main() {
 	}
 
 	calls := make(chan proxy.Call, 64)
+	var dropped atomic.Int64
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           proxy.Handler(calls),
+		Handler:           proxy.Handler(calls, proxy.WithDropCounter(&dropped)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
@@ -73,6 +75,7 @@ func main() {
 
 	// Feed captured calls into the TUI as messages.
 	go func() {
+		var lastDropped int64
 		for c := range calls {
 			if group := groups.Current(); group != nil && !c.Time.Before(group.StartedAt) {
 				c.Group = group
@@ -81,6 +84,11 @@ func main() {
 				fmt.Fprintf(os.Stderr, "history append: %v\n", err)
 			}
 			p.Send(tui.NewCallMsg(c))
+			// Surface any captures dropped while the consumer was behind.
+			if d := dropped.Load(); d != lastDropped {
+				lastDropped = d
+				p.Send(tui.DroppedMsg(d))
+			}
 		}
 	}()
 

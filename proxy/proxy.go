@@ -10,6 +10,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -65,6 +66,7 @@ type config struct {
 	target       *url.URL
 	maxBodyBytes int64
 	transport    http.RoundTripper
+	dropped      *atomic.Int64
 }
 
 // Option configures the proxy handler.
@@ -95,6 +97,15 @@ func WithTransport(rt http.RoundTripper) Option {
 		if rt != nil {
 			c.transport = rt
 		}
+	}
+}
+
+// WithDropCounter records how many captured calls were dropped because the
+// consumer couldn't keep up. The proxy never blocks on a full channel; this lets
+// the caller surface the loss instead of leaving it silent.
+func WithDropCounter(n *atomic.Int64) Option {
+	return func(c *config) {
+		c.dropped = n
 	}
 }
 
@@ -185,6 +196,11 @@ func Handler(calls chan<- Call, opts ...Option) http.Handler {
 		select {
 		case calls <- call:
 		default:
+			// Consumer is behind; drop rather than stall the proxy, but count it
+			// so the loss can be surfaced instead of vanishing.
+			if cfg.dropped != nil {
+				cfg.dropped.Add(1)
+			}
 		}
 	})
 }
