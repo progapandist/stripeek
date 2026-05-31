@@ -67,6 +67,7 @@ type config struct {
 	maxBodyBytes int64
 	transport    http.RoundTripper
 	dropped      *atomic.Int64
+	isWebhook    bool
 }
 
 // Option configures the proxy handler.
@@ -98,6 +99,13 @@ func WithTransport(rt http.RoundTripper) Option {
 			c.transport = rt
 		}
 	}
+}
+
+// WithWebhook tags every captured Call as inbound webhook traffic so the TUI can
+// present it as an event rather than an outbound API call. Use it on a listener
+// that forwards Stripe CLI webhook deliveries to a local app.
+func WithWebhook() Option {
+	return func(c *config) { c.isWebhook = true }
 }
 
 // WithDropCounter records how many captured calls were dropped because the
@@ -154,6 +162,7 @@ func Handler(calls chan<- Call, opts ...Option) http.Handler {
 			KeyMode:         keyMode(r.Header.Get("Authorization")),
 			ResponseHeader:  http.Header{},
 			StripeRequestID: "",
+			IsWebhook:       cfg.isWebhook,
 		}
 
 		var reqCapture *captureReadCloser

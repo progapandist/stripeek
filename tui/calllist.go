@@ -12,6 +12,13 @@ import (
 	"github.com/progapandist/stripeek/proxy"
 )
 
+// Direction glyphs prefix every row so inbound webhooks read apart from
+// outbound API traffic at a glance.
+const (
+	glyphOutbound = "▶"
+	glyphInbound  = "◀"
+)
+
 // callItem is a captured call as a bubbles/list entry.
 type callItem struct {
 	call proxy.Call
@@ -41,8 +48,17 @@ func (c callItem) timeLatency() string {
 // on top, "time latency" below. Long paths are middle-truncated so the method
 // and status stay visible and the metadata keeps its own dedicated line.
 func (c callItem) renderRows(contentW int, selected bool) (string, string) {
+	glyph, glyphSty := glyphOutbound, styleDirOut
+	if c.call.IsWebhook {
+		glyph, glyphSty = glyphInbound, styleDirIn
+	}
+	dir := glyphSty.Render(glyph)
+
 	methodSty := methodStyle(c.call.Method)
 	pathSty := lipgloss.NewStyle()
+	if c.call.IsWebhook {
+		pathSty = styleWebhook // webhook rows pop in magenta
+	}
 	if selected {
 		methodSty = methodSty.Bold(true)
 		pathSty = pathSty.Bold(true)
@@ -50,12 +66,13 @@ func (c callItem) renderRows(contentW int, selected bool) (string, string) {
 	method := methodSty.Render(c.call.Method)
 	status := c.statusToken(selected)
 
+	dirW := lipgloss.Width(dir) + 1       // glyph + separating space
 	prefixW := lipgloss.Width(method) + 1 // method + separating space
 	statusW := lipgloss.Width(status) + 1 // separating space + status
-	availPath := max(1, contentW-prefixW-statusW)
+	availPath := max(1, contentW-dirW-prefixW-statusW)
 
 	path := truncateMiddle(callDisplayPath(c.call), availPath)
-	top := method + " " + pathSty.Render(path) + " " + status
+	top := dir + " " + method + " " + pathSty.Render(path) + " " + status
 	return fitLine(top, contentW), fitLine(c.timeLatency(), contentW)
 }
 

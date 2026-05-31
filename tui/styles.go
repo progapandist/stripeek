@@ -53,6 +53,10 @@ var (
 	// so a glance down the Calls list separates reads from writes.
 	colMethodSafe  = adaptive("#0e7490", "#67e8f9") // GET/HEAD/OPTIONS/TRACE (cyan)
 	colMethodWrite = adaptive("#c2410c", "#fb923c") // POST/PUT/PATCH/DELETE/… (amber)
+
+	// Inbound webhook events get their own magenta so they stand apart from both
+	// the method colors (cyan/amber) and the header teal in the Calls list.
+	colWebhook = adaptive("#a21caf", "#e879f9") // magenta: inbound webhook events
 )
 
 // Shared text styles.
@@ -78,6 +82,11 @@ var (
 
 	styleMethodSafe  = lipgloss.NewStyle().Bold(true).Foreground(colMethodSafe)
 	styleMethodWrite = lipgloss.NewStyle().Bold(true).Foreground(colMethodWrite)
+
+	// Webhook event label and the per-row direction glyphs (◀ inbound, ▶ outbound).
+	styleWebhook = lipgloss.NewStyle().Bold(true).Foreground(colWebhook)
+	styleDirIn   = lipgloss.NewStyle().Foreground(colWebhook)
+	styleDirOut  = lipgloss.NewStyle().Foreground(colDim)
 
 	// Account context badges: test reads cool/benign, live runs warm to flag
 	// that requests are touching real data.

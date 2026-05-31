@@ -131,6 +131,33 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 	return f(r)
 }
 
+func TestHandlerTagsWebhookCaptures(t *testing.T) {
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("ok")), Request: r}, nil
+	})
+
+	cases := []struct {
+		name string
+		opts []Option
+		want bool
+	}{
+		{"webhook", []Option{WithWebhook()}, true},
+		{"default", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := make(chan Call, 1)
+			opts := append([]Option{WithTarget("https://api.stripe.test"), WithTransport(rt)}, tc.opts...)
+			handler := Handler(calls, opts...)
+			req := httptest.NewRequest(http.MethodPost, "http://stripeek.test/webhooks", strings.NewReader("{}"))
+			handler.ServeHTTP(httptest.NewRecorder(), req)
+			if got := (<-calls).IsWebhook; got != tc.want {
+				t.Fatalf("IsWebhook = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestHandlerInfersKeyMode(t *testing.T) {
 	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("ok")), Request: r}, nil

@@ -909,6 +909,31 @@ func TestCallRowKeepsStatusVisibleForLongPath(t *testing.T) {
 	}
 }
 
+func TestCallRowMarksDirectionByKind(t *testing.T) {
+	outbound := callItem{call: proxy.Call{
+		Method:     "POST",
+		RequestURI: "/v1/subscriptions",
+		Status:     200,
+		Time:       time.Date(2026, 5, 26, 7, 53, 0, 0, time.UTC),
+	}}
+	webhook := callItem{call: proxy.Call{
+		Method:     "POST",
+		RequestURI: "/webhooks",
+		Status:     200,
+		IsWebhook:  true,
+		Time:       time.Date(2026, 5, 26, 7, 53, 0, 0, time.UTC),
+	}}
+
+	outTop, _ := outbound.renderRows(48, false)
+	if !strings.Contains(outTop, glyphOutbound) || strings.Contains(outTop, glyphInbound) {
+		t.Fatalf("outbound row should carry the ▶ glyph only:\n%q", outTop)
+	}
+	whTop, _ := webhook.renderRows(48, false)
+	if !strings.Contains(whTop, glyphInbound) || strings.Contains(whTop, glyphOutbound) {
+		t.Fatalf("webhook row should carry the ◀ glyph only:\n%q", whTop)
+	}
+}
+
 func TestTruncateMiddleKeepsEnds(t *testing.T) {
 	got := truncateMiddle("/v1/customers/cus_ABCDEFGHIJKLMNOP/sources", 20)
 	if lipgloss.Width(got) > 20 {

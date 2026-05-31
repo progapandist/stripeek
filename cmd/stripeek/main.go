@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"net/http"
 	"os"
@@ -24,17 +25,24 @@ var (
 )
 
 func main() {
-	for _, arg := range os.Args[1:] {
-		if arg == "--version" || arg == "-version" {
-			fmt.Printf("stripeek %s (commit %s, built %s)\n", version, commit, date)
-			os.Exit(0)
-		}
+	fs := flag.NewFlagSet("stripeek", flag.ExitOnError)
+	showVersion := fs.Bool("version", false, "print version and exit")
+	addrFlag := fs.String("addr", envOr("STRIPEEK_ADDR", "127.0.0.1:4242"),
+		"address for the outbound Stripe API proxy")
+	webhookTarget := fs.String("webhook-target", os.Getenv("STRIPEEK_WEBHOOK_TARGET"),
+		"forward inbound Stripe CLI webhooks to this local app URL (enables the webhook listener)")
+	webhookAddr := fs.String("webhook-addr", envOr("STRIPEEK_WEBHOOK_ADDR", "127.0.0.1:4243"),
+		"address for the inbound webhook listener")
+	// Ignore parse errors beyond flag's own ExitOnError handling; unknown args
+	// shouldn't crash a debugging tool.
+	_ = fs.Parse(os.Args[1:])
+
+	if *showVersion {
+		fmt.Printf("stripeek %s (commit %s, built %s)\n", version, commit, date)
+		os.Exit(0)
 	}
 
-	addr := "127.0.0.1:4242"
-	if v := os.Getenv("STRIPEEK_ADDR"); v != "" {
-		addr = v
-	}
+	addr := *addrFlag
 	historyLimit := envInt("STRIPEEK_HISTORY_LIMIT", tui.DefaultMaxCalls)
 	historyPath := os.Getenv("STRIPEEK_HISTORY_PATH")
 	if historyPath == "" {
@@ -63,6 +71,28 @@ func main() {
 			os.Exit(1)
 		}
 	}()
+
+	// Optional second listener: forwards inbound Stripe CLI webhooks to a local
+	// app, tagging each capture as a webhook. Only started when a target is set.
+	var webhookServer *http.Server
+	if *webhookTarget != "" {
+		webhookServer = &http.Server{
+			Addr: *webhookAddr,
+			Handler: proxy.Handler(calls,
+				proxy.WithTarget(*webhookTarget),
+				proxy.WithWebhook(),
+				proxy.WithDropCounter(&dropped)),
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       30 * time.Second,
+			WriteTimeout:      60 * time.Second,
+			IdleTimeout:       90 * time.Second,
+		}
+		go func() {
+			if err := webhookServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				fmt.Fprintf(os.Stderr, "webhook proxy: %v\n", err)
+			}
+		}()
+	}
 
 	groups := tui.NewGroupManager(savedCalls)
 	m := tui.NewWithGroupManager(historyLimit, savedCalls, groups)
@@ -102,6 +132,18 @@ func main() {
 	if err := server.Shutdown(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "proxy shutdown: %v\n", err)
 	}
+	if webhookServer != nil {
+		if err := webhookServer.Shutdown(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "webhook proxy shutdown: %v\n", err)
+		}
+	}
+}
+
+func envOr(name, fallback string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return fallback
 }
 
 func envInt(name string, fallback int) int {
