@@ -208,7 +208,11 @@ func (m *Model) routeKey(msg tea.KeyMsg) tea.Cmd {
 
 func (m *Model) prependCall(call proxy.Call) {
 	m.nextID++
-	m.allCalls = append([]callItem{{call: call, id: m.nextID}}, m.allCalls...)
+	item := callItem{call: call, id: m.nextID}
+	if call.IsWebhook {
+		item.eventType, _ = webhookMeta(call.ReqBody)
+	}
+	m.allCalls = append([]callItem{item}, m.allCalls...)
 	if m.maxCalls > 0 && len(m.allCalls) > m.maxCalls {
 		m.allCalls = m.allCalls[:m.maxCalls]
 	}

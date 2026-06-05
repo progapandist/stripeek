@@ -934,6 +934,62 @@ func TestCallRowMarksDirectionByKind(t *testing.T) {
 	}
 }
 
+func TestWebhookMetaExtractsTypeAndObjectID(t *testing.T) {
+	body := []byte(`{"id":"evt_1","type":"customer.subscription.created","data":{"object":{"id":"sub_abc123","object":"subscription"}}}`)
+	gotType, gotID := webhookMeta(body)
+	if gotType != "customer.subscription.created" || gotID != "sub_abc123" {
+		t.Fatalf("webhookMeta = %q,%q", gotType, gotID)
+	}
+
+	// Truncated / non-event bodies yield empty strings so callers fall back.
+	for _, bad := range [][]byte{
+		[]byte(`{"id":"evt_1","type":"customer.subscriptio`), // truncated JSON
+		[]byte(`not json at all`),
+		nil,
+	} {
+		if ty, id := webhookMeta(bad); ty != "" || id != "" {
+			t.Fatalf("webhookMeta(%q) = %q,%q, want empty", bad, ty, id)
+		}
+	}
+}
+
+func TestWebhookRowUsesEventNameAndFilter(t *testing.T) {
+	hook := callItem{
+		call:      proxy.Call{IsWebhook: true, Method: "POST", RequestURI: "/webhooks", Status: 200, Time: time.Date(2026, 5, 26, 7, 53, 0, 0, time.UTC)},
+		eventType: "customer.subscription.created",
+	}
+	out := callItem{
+		call: proxy.Call{Method: "GET", RequestURI: "/v1/customers", Status: 200, Time: time.Date(2026, 5, 26, 7, 53, 0, 0, time.UTC)},
+	}
+
+	// FilterValue: event name for webhooks, path for outbound.
+	if got := hook.FilterValue(); got != "customer.subscription.created" {
+		t.Fatalf("webhook FilterValue = %q", got)
+	}
+	if got := out.FilterValue(); got != "/v1/customers" {
+		t.Fatalf("outbound FilterValue = %q", got)
+	}
+
+	// The row reads by event name and drops the POST method token.
+	top, _ := hook.renderRows(60, false)
+	if !strings.Contains(top, "customer.subscription.created") {
+		t.Fatalf("webhook row lost event name:\n%q", top)
+	}
+	if strings.Contains(top, "POST") || strings.Contains(top, "/webhooks") {
+		t.Fatalf("webhook row should not show method or path:\n%q", top)
+	}
+
+	// A webhook with no parsed event type falls back to the path label.
+	bare := callItem{call: proxy.Call{IsWebhook: true, Method: "POST", RequestURI: "/webhooks", Status: 200}}
+	if got := bare.FilterValue(); got != "/webhooks" {
+		t.Fatalf("bare webhook FilterValue = %q, want path fallback", got)
+	}
+	bareTop, _ := bare.renderRows(60, false)
+	if !strings.Contains(bareTop, "/webhooks") {
+		t.Fatalf("bare webhook row should fall back to path:\n%q", bareTop)
+	}
+}
+
 func TestTruncateMiddleKeepsEnds(t *testing.T) {
 	got := truncateMiddle("/v1/customers/cus_ABCDEFGHIJKLMNOP/sources", 20)
 	if lipgloss.Width(got) > 20 {

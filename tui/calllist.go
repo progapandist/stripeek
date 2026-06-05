@@ -21,11 +21,19 @@ const (
 
 // callItem is a captured call as a bubbles/list entry.
 type callItem struct {
-	call proxy.Call
-	id   uint64
+	call      proxy.Call
+	id        uint64
+	eventType string // webhook body `type`, e.g. "customer.subscription.created"
 }
 
-func (c callItem) FilterValue() string { return callDisplayPath(c.call) }
+// FilterValue is what the "/" list filter matches against: the event name for a
+// webhook (so /sub finds customer.subscription.*), otherwise the request path.
+func (c callItem) FilterValue() string {
+	if c.call.IsWebhook && c.eventType != "" {
+		return c.eventType
+	}
+	return callDisplayPath(c.call)
+}
 
 func (c callItem) statusToken(selected bool) string {
 	sty := styleOK
@@ -44,9 +52,10 @@ func (c callItem) timeLatency() string {
 		c.call.Latency.Milliseconds()))
 }
 
-// renderRows lays a call out over the delegate's two rows: "METHOD path STATUS"
-// on top, "time latency" below. Long paths are middle-truncated so the method
-// and status stay visible and the metadata keeps its own dedicated line.
+// renderRows lays a call out over the delegate's two rows: a direction glyph,
+// then "METHOD path STATUS" (outbound) or "event.name STATUS" (webhook), with
+// "time latency" below. The label is middle-truncated so the glyph and status
+// stay visible and the metadata keeps its own dedicated line.
 func (c callItem) renderRows(contentW int, selected bool) (string, string) {
 	glyph, glyphSty := glyphOutbound, styleDirOut
 	if c.call.IsWebhook {
@@ -54,25 +63,40 @@ func (c callItem) renderRows(contentW int, selected bool) (string, string) {
 	}
 	dir := glyphSty.Render(glyph)
 
-	methodSty := methodStyle(c.call.Method)
-	pathSty := lipgloss.NewStyle()
+	// Webhook rows with a known event read by event name and drop the method
+	// token (it's always POST); everything else keeps "METHOD path".
+	label := callDisplayPath(c.call)
+	labelSty := lipgloss.NewStyle()
+	showMethod := true
 	if c.call.IsWebhook {
-		pathSty = styleWebhook // webhook rows pop in magenta
+		labelSty = styleWebhook // webhook rows pop in magenta
+		if c.eventType != "" {
+			label = c.eventType
+			showMethod = false
+		}
 	}
 	if selected {
-		methodSty = methodSty.Bold(true)
-		pathSty = pathSty.Bold(true)
+		labelSty = labelSty.Bold(true)
 	}
-	method := methodSty.Render(c.call.Method)
+
 	status := c.statusToken(selected)
-
 	dirW := lipgloss.Width(dir) + 1       // glyph + separating space
-	prefixW := lipgloss.Width(method) + 1 // method + separating space
 	statusW := lipgloss.Width(status) + 1 // separating space + status
-	availPath := max(1, contentW-dirW-prefixW-statusW)
 
-	path := truncateMiddle(callDisplayPath(c.call), availPath)
-	top := dir + " " + method + " " + pathSty.Render(path) + " " + status
+	prefix, prefixW := "", 0
+	if showMethod {
+		methodSty := methodStyle(c.call.Method)
+		if selected {
+			methodSty = methodSty.Bold(true)
+		}
+		method := methodSty.Render(c.call.Method)
+		prefix = method + " "
+		prefixW = lipgloss.Width(method) + 1 // method + separating space
+	}
+
+	availLabel := max(1, contentW-dirW-prefixW-statusW)
+	label = truncateMiddle(label, availLabel)
+	top := dir + " " + prefix + labelSty.Render(label) + " " + status
 	return fitLine(top, contentW), fitLine(c.timeLatency(), contentW)
 }
 
