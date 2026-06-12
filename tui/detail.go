@@ -54,6 +54,15 @@ func (m Model) detailHeaderLines(width int) []string {
 			lines = append(lines, fitLine(prefix+groupStyle(c.Group).Render(chunk), width))
 		}
 	}
+
+	// Operation hint: only when the selection has related calls/events and no
+	// relation mode is active — so it never appears without webhook traffic.
+	if m.relationOpID == 0 && m.selOpID != 0 {
+		if n := m.opMemberCount(m.selOpID) - 1; n > 0 {
+			hint := fmt.Sprintf("%d related · r focus · ctrl+r dim", n)
+			lines = append(lines, fitLine(styleFaint.Render(hint), width))
+		}
+	}
 	return lines
 }
 

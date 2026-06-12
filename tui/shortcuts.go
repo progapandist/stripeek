@@ -21,6 +21,7 @@ func (m Model) helpBar() string {
 			{"↑↓", "move"},
 			{"enter", "inspect"},
 			{"/", "filter"},
+			{"r", "related"},
 			{"g", "groups"},
 			{"ctrl+x", "clear"},
 			{"tab", "switch"},
@@ -152,6 +153,7 @@ func callsShortcuts() shortcutSection {
 			{"t / b", "top/bottom"},
 			{"enter", "inspect request"},
 			{"/ / esc", "filter / clear"},
+			{"r / ctrl+r", "related: focus / dim"},
 			{"g / ctrl+g", "groups / new group"},
 		},
 	}

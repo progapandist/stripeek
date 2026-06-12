@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -46,6 +47,8 @@ func key(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyEsc}
 	case "ctrl+g":
 		return tea.KeyMsg{Type: tea.KeyCtrlG}
+	case "ctrl+r":
+		return tea.KeyMsg{Type: tea.KeyCtrlR}
 	case "ctrl+d":
 		return tea.KeyMsg{Type: tea.KeyCtrlD}
 	case "ctrl+f":
@@ -891,7 +894,7 @@ func TestCallRowKeepsStatusVisibleForLongPath(t *testing.T) {
 		Time:       time.Date(2026, 5, 26, 7, 53, 0, 0, time.UTC),
 	}
 	item := callItem{call: long}
-	top, bottom := item.renderRows(48, false)
+	top, bottom := item.renderRows(48, false, false, false)
 
 	if lipgloss.Width(top) > 48 || lipgloss.Width(bottom) > 48 {
 		t.Fatalf("rows exceed width:\n%q\n%q", top, bottom)
@@ -924,22 +927,36 @@ func TestCallRowMarksDirectionByKind(t *testing.T) {
 		Time:       time.Date(2026, 5, 26, 7, 53, 0, 0, time.UTC),
 	}}
 
-	outTop, _ := outbound.renderRows(48, false)
+	outTop, _ := outbound.renderRows(48, false, false, false)
 	if !strings.Contains(outTop, glyphOutbound) || strings.Contains(outTop, glyphInbound) {
 		t.Fatalf("outbound row should carry the ▶ glyph only:\n%q", outTop)
 	}
-	whTop, _ := webhook.renderRows(48, false)
+	whTop, _ := webhook.renderRows(48, false, false, false)
 	if !strings.Contains(whTop, glyphInbound) || strings.Contains(whTop, glyphOutbound) {
 		t.Fatalf("webhook row should carry the ◀ glyph only:\n%q", whTop)
 	}
 }
 
 func TestWebhookMetaExtractsEventFields(t *testing.T) {
-	body := []byte(`{"id":"evt_1","type":"customer.subscription.created","livemode":false,"data":{"object":{"id":"sub_abc123","object":"subscription"}}}`)
+	body := []byte(`{"id":"evt_1","type":"customer.subscription.created","livemode":false,` +
+		`"request":{"id":"req_77","idempotency_key":"k"},` +
+		`"data":{"object":{"id":"sub_abc123","object":"subscription","customer":"cus_9",` +
+		`"test_clock":"clock_5","latest_invoice":"in_2","application":null}}}`)
 	got := webhookMeta(body)
-	want := webhookInfo{eventType: "customer.subscription.created", eventID: "evt_1", livemode: "test"}
-	if got != want {
-		t.Fatalf("webhookMeta = %+v, want %+v", got, want)
+	if got.eventType != "customer.subscription.created" || got.eventID != "evt_1" ||
+		got.livemode != "test" || got.requestID != "req_77" {
+		t.Fatalf("webhookMeta = %+v", got)
+	}
+	if !reflect.DeepEqual(got.refs, []string{"sub_abc123", "cus_9", "clock_5", "in_2"}) {
+		t.Fatalf("refs = %v", got.refs)
+	}
+
+	// Legacy request form (bare string) and async events (request null).
+	if got := webhookMeta([]byte(`{"type":"t","request":"req_old"}`)); got.requestID != "req_old" {
+		t.Fatalf("legacy request = %+v", got)
+	}
+	if got := webhookMeta([]byte(`{"type":"t","request":null}`)); got.requestID != "" {
+		t.Fatalf("null request = %+v", got)
 	}
 
 	if got := webhookMeta([]byte(`{"id":"evt_2","type":"charge.succeeded","livemode":true}`)); got.livemode != "live" {
@@ -956,9 +973,26 @@ func TestWebhookMetaExtractsEventFields(t *testing.T) {
 		[]byte(`not json at all`),
 		nil,
 	} {
-		if got := webhookMeta(bad); got != (webhookInfo{}) {
+		if got := webhookMeta(bad); got.eventType != "" || got.eventID != "" ||
+			got.requestID != "" || len(got.refs) != 0 {
 			t.Fatalf("webhookMeta(%q) = %+v, want zero value", bad, got)
 		}
+	}
+}
+
+func TestOutboundSeedRefs(t *testing.T) {
+	refs := outboundSeedRefs(
+		"/v1/test_helpers/test_clocks/clock_77/advance?customer=cus_1&starting_after=cus_1",
+		[]byte(`{"id":"clock_77","object":"test_helpers.test_clock","customer":"cus_1","latest_invoice":"in_3"}`))
+	if !reflect.DeepEqual(refs, []string{"clock_77", "cus_1", "in_3"}) {
+		t.Fatalf("refs = %v", refs)
+	}
+	// List responses contribute nothing beyond recognised top-level fields,
+	// and nested data ids must not leak into the seed.
+	refs = outboundSeedRefs("/v1/invoices?status=open",
+		[]byte(`{"object":"list","data":[{"id":"in_a","customer":"cus_b"}]}`))
+	if len(refs) != 0 {
+		t.Fatalf("list response should seed nothing, got %v", refs)
 	}
 }
 
@@ -980,7 +1014,7 @@ func TestWebhookRowUsesEventNameAndFilter(t *testing.T) {
 	}
 
 	// The row reads by event name and drops the POST method token.
-	top, _ := hook.renderRows(60, false)
+	top, _ := hook.renderRows(60, false, false, false)
 	if !strings.Contains(top, "customer.subscription.created") {
 		t.Fatalf("webhook row lost event name:\n%q", top)
 	}
@@ -993,7 +1027,7 @@ func TestWebhookRowUsesEventNameAndFilter(t *testing.T) {
 	if got := bare.FilterValue(); got != "/webhooks" {
 		t.Fatalf("bare webhook FilterValue = %q, want path fallback", got)
 	}
-	bareTop, _ := bare.renderRows(60, false)
+	bareTop, _ := bare.renderRows(60, false, false, false)
 	if !strings.Contains(bareTop, "/webhooks") {
 		t.Fatalf("bare webhook row should fall back to path:\n%q", bareTop)
 	}
@@ -1064,7 +1098,7 @@ func TestCallRowShortPathKeepsStatusOnTop(t *testing.T) {
 		Latency:    12 * time.Millisecond,
 		Time:       time.Date(2026, 5, 26, 7, 53, 0, 0, time.UTC),
 	}}
-	top, bottom := item.renderRows(60, false)
+	top, bottom := item.renderRows(60, false, false, false)
 	if !strings.Contains(top, "404") {
 		t.Fatalf("short path should keep status on top row:\n%q", top)
 	}
@@ -1229,5 +1263,200 @@ func TestInspectorLongValuesStayResponsive(t *testing.T) {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("long-value payload did not render within 3s (perf regression)")
+	}
+}
+
+// opCall builds an outbound call for operation tests.
+func opCall(method, uri, reqID, respBody string) proxy.Call {
+	return proxy.Call{
+		Time:            time.Now(),
+		Method:          method,
+		Path:            uri,
+		RequestURI:      uri,
+		Status:          200,
+		StripeRequestID: reqID,
+		RespBody:        []byte(respBody),
+		Latency:         5 * time.Millisecond,
+	}
+}
+
+// opEvent builds a webhook capture whose body carries the given request id
+// ("" → null, an async event) and data.object JSON.
+func opEvent(eventType, reqID, object string) proxy.Call {
+	req := "null"
+	if reqID != "" {
+		req = fmt.Sprintf(`{"id":%q,"idempotency_key":null}`, reqID)
+	}
+	body := fmt.Sprintf(`{"id":"evt_x","type":%q,"livemode":false,"request":%s,"data":{"object":%s}}`,
+		eventType, req, object)
+	return proxy.Call{
+		Time:       time.Now(),
+		Method:     "POST",
+		Path:       "/webhooks",
+		RequestURI: "/webhooks",
+		Status:     200,
+		IsWebhook:  true,
+		ReqBody:    []byte(body),
+	}
+}
+
+// operationScenario mirrors the shape of a real captured test-client run:
+// a subscription create with sync events, a polling read, a clock advance
+// whose async cascade chains by refs, an orphan pair (trigger not proxied),
+// and a ref-less event.
+func operationScenario() []proxy.Call {
+	return []proxy.Call{
+		opCall("POST", "/v1/subscriptions", "req_A", `{"id":"sub_1","customer":"cus_1","latest_invoice":"in_1"}`),
+		opEvent("customer.subscription.created", "req_A", `{"id":"sub_1","customer":"cus_1"}`),
+		opEvent("invoice.paid", "req_A", `{"id":"in_1","customer":"cus_1","subscription":"sub_1"}`),
+		opCall("GET", "/v1/subscriptions/sub_1", "req_B", `{"id":"sub_1","customer":"cus_1"}`),
+		opCall("POST", "/v1/test_helpers/test_clocks/clock_1/advance", "req_C", `{"id":"clock_1"}`),
+		opEvent("invoice.created", "", `{"id":"in_2","customer":"cus_1","subscription":"sub_1","test_clock":"clock_1"}`),
+		opEvent("charge.succeeded", "", `{"id":"ch_1","customer":"cus_1","invoice":"in_2"}`),
+		opEvent("product.created", "req_Z", `{"id":"prod_9"}`),
+		opEvent("price.created", "req_Z", `{"id":"price_9"}`),
+		opEvent("balance.available", "", `{"object":"balance"}`),
+	}
+}
+
+func TestOperationsLinkByRequestIDAndAdoption(t *testing.T) {
+	msgs := []tea.Msg{tea.WindowSizeMsg{Width: 100, Height: 40}}
+	for _, c := range operationScenario() {
+		msgs = append(msgs, NewCallMsg(c))
+	}
+	m := drive(New(), msgs...)
+
+	// allCalls is newest-first; index 9 is the subscription POST.
+	op := func(i int) uint64 { return m.allCalls[i].opID }
+	subOp, advOp := op(9), op(5)
+	if subOp == 0 || !m.allCalls[9].isAnchor {
+		t.Fatalf("subscription POST should anchor an operation, got op=%d anchor=%v", subOp, m.allCalls[9].isAnchor)
+	}
+	if op(8) != subOp || op(7) != subOp {
+		t.Fatalf("sync events should join by request id: got %d,%d want %d", op(8), op(7), subOp)
+	}
+	if op(6) != 0 {
+		t.Fatalf("GET should never get an operation, got %d", op(6))
+	}
+	if advOp == 0 || advOp == subOp || !m.allCalls[5].isAnchor {
+		t.Fatalf("advance should anchor its own operation, got %d (sub %d)", advOp, subOp)
+	}
+	if op(4) != advOp {
+		t.Fatalf("async invoice.created should adopt into the advance op via clock ref, got %d want %d", op(4), advOp)
+	}
+	if op(3) != advOp {
+		t.Fatalf("charge.succeeded should chain via the accreted invoice ref, got %d want %d", op(3), advOp)
+	}
+	orphan := op(2)
+	if orphan == 0 || orphan == subOp || orphan == advOp || m.allCalls[2].isAnchor {
+		t.Fatalf("orphan event should mint an anchor-less op, got %d anchor=%v", orphan, m.allCalls[2].isAnchor)
+	}
+	if op(1) != orphan {
+		t.Fatalf("orphan sibling sharing the request id should join, got %d want %d", op(1), orphan)
+	}
+	if op(0) != 0 {
+		t.Fatalf("event with no request id and no known refs should stay loose, got %d", op(0))
+	}
+
+	// History replay (oldest-first) reproduces the same assignment.
+	replay := drive(NewWithCalls(50, operationScenario()), tea.WindowSizeMsg{Width: 100, Height: 40})
+	for i := range m.allCalls {
+		if replay.allCalls[i].opID != m.allCalls[i].opID {
+			t.Fatalf("replay diverged at %d: %d vs %d", i, replay.allCalls[i].opID, m.allCalls[i].opID)
+		}
+	}
+}
+
+func TestRelationFilterFocusesOperationAndBypassesGroupFilter(t *testing.T) {
+	grp := &proxy.Group{ID: "g1", Name: "manual group", Color: "Teal", LightHex: "#0f766e", DarkHex: "#5eead4"}
+	anchor := opCall("POST", "/v1/subscriptions", "req_A", `{"id":"sub_1","customer":"cus_1"}`)
+	anchor.Group = grp
+	m := drive(New(), tea.WindowSizeMsg{Width: 100, Height: 40},
+		NewCallMsg(opCall("POST", "/v1/customers", "req_0", `{"id":"cus_1"}`)),
+		NewCallMsg(anchor),
+		NewCallMsg(opEvent("customer.subscription.created", "req_A", `{"id":"sub_1"}`)),
+		NewCallMsg(opCall("GET", "/v1/invoices", "req_B", `{"object":"list"}`)),
+	)
+
+	// Selecting a member shows the hint in the inspector header.
+	m = drive(m, key("down")) // newest-first: GET, event, anchor, customers — select the event
+	header := strings.Join(m.detailHeaderLines(60), "\n")
+	if !strings.Contains(header, "1 related") {
+		t.Fatalf("header should hint at the related anchor:\n%s", header)
+	}
+
+	// With a group filter hiding everything but the anchor, relation mode
+	// still shows every member of the operation.
+	m.groupFilterID = "g1"
+	m.rebuildList()
+	if got := len(m.list.Items()); got != 1 {
+		t.Fatalf("group filter precondition: want 1 item, got %d", got)
+	}
+	m = drive(m, key("r"))
+	if m.relationOpID == 0 || m.relationDim {
+		t.Fatalf("r should enter relation filter mode, got op=%d dim=%v", m.relationOpID, m.relationDim)
+	}
+	if got := len(m.list.Items()); got != 2 {
+		t.Fatalf("relation mode should bypass the group filter: want anchor+event, got %d", got)
+	}
+	// Order stays global newest-first: the event on top, the anchor below.
+	first := m.list.Items()[0].(callItem)
+	last := m.list.Items()[1].(callItem)
+	if first.isAnchor || !last.isAnchor {
+		t.Fatalf("relation mode should keep newest-first order, got anchor flags %v,%v",
+			first.isAnchor, last.isAnchor)
+	}
+	if last.call.Group == nil {
+		t.Fatal("relation mode must not strip manual group decoration")
+	}
+	if line := m.callCountLine(); !strings.Contains(line, "in operation POST /v1/subscriptions") {
+		t.Fatalf("count line should name the operation:\n%q", line)
+	}
+	// No hint while the mode is active.
+	if h := strings.Join(m.detailHeaderLines(60), "\n"); strings.Contains(h, "related") {
+		t.Fatalf("hint should be suppressed inside relation mode:\n%s", h)
+	}
+
+	// esc exits back to the group-filtered view.
+	m = drive(m, key("esc"))
+	if m.relationOpID != 0 || len(m.list.Items()) != 1 {
+		t.Fatalf("esc should exit relation mode and restore the group filter, got op=%d items=%d",
+			m.relationOpID, len(m.list.Items()))
+	}
+
+	// ctrl+r dims instead: full timeline stays in the list.
+	m = drive(m, key("ctrl+r"))
+	if m.relationOpID == 0 || !m.relationDim {
+		t.Fatalf("ctrl+r should enter dim mode, got op=%d dim=%v", m.relationOpID, m.relationDim)
+	}
+	if got := len(m.list.Items()); got != 4 {
+		t.Fatalf("dim mode should keep every row visible, got %d", got)
+	}
+	if line := m.callCountLine(); !strings.Contains(line, "2 related to POST /v1/subscriptions") {
+		t.Fatalf("dim count line should report members:\n%q", line)
+	}
+	m = drive(m, key("esc"))
+	if m.relationOpID != 0 {
+		t.Fatal("esc should exit dim mode")
+	}
+}
+
+func TestRelationInertWithoutRelatedTraffic(t *testing.T) {
+	m := drive(New(), tea.WindowSizeMsg{Width: 100, Height: 30},
+		NewCallMsg(opCall("POST", "/v1/customers", "req_1", `{"id":"cus_1"}`)),
+		NewCallMsg(opCall("GET", "/v1/customers/cus_1", "req_2", `{"id":"cus_1"}`)),
+	)
+	for _, k := range []string{"r", "ctrl+r"} {
+		m = drive(m, key(k))
+		if m.relationOpID != 0 {
+			t.Fatalf("%s should be inert without related traffic", k)
+		}
+	}
+	m = drive(m, key("down"), key("r")) // the mutation: single-member op, still inert
+	if m.relationOpID != 0 {
+		t.Fatal("single-member operation should not enter relation mode")
+	}
+	if h := strings.Join(m.detailHeaderLines(60), "\n"); strings.Contains(h, "related") {
+		t.Fatalf("no hint expected without webhook traffic:\n%s", h)
 	}
 }

@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"net/http"
+
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -49,6 +51,7 @@ type Model struct {
 	filtering     bool   // true while typing a filter
 	selected      proxy.Call
 	selWebhook    webhookInfo // derived metadata for the selected call; zero unless it's a webhook
+	selOpID       uint64      // operation of the selected row; 0 = none
 	hasSel        bool
 	loadedID      uint64
 	width         int
@@ -62,6 +65,16 @@ type Model struct {
 	shortcuts     bool
 	dropped       int    // captures lost because the TUI fell behind the proxy
 	OnClear       func() // called after in-memory history is wiped
+
+	// Operation state: automatic grouping of a mutating API call with the
+	// webhooks it caused. Items get an opID once at insertion and never change;
+	// the indexes only grow (the ref index intentionally remembers the most
+	// recent operation to touch each object id).
+	nextOpID     uint64
+	opByReq      map[string]uint64 // Stripe request id → operation
+	opByRef      map[string]uint64 // object id → operation that most recently touched it
+	relationOpID uint64            // operation focused by a relation mode; 0 = off
+	relationDim  bool              // dim mode: fade non-members instead of hiding them
 }
 
 func New() Model {
@@ -93,6 +106,8 @@ func NewWithGroupManager(maxCalls int, calls []proxy.Call, groupMgr *GroupManage
 		maxCalls: maxCalls,
 		focused:  focusList,
 		groupMgr: groupMgr,
+		opByReq:  map[string]uint64{},
+		opByRef:  map[string]uint64{},
 	}
 	for _, c := range calls {
 		m.prependCall(c)
@@ -210,13 +225,112 @@ func (m *Model) routeKey(msg tea.KeyMsg) tea.Cmd {
 func (m *Model) prependCall(call proxy.Call) {
 	m.nextID++
 	item := callItem{call: call, id: m.nextID}
-	if call.IsWebhook {
+	switch {
+	case call.IsWebhook:
 		item.webhook = webhookMeta(call.ReqBody)
+		item.opID = m.assignWebhookOp(item.webhook)
+	case call.Method != http.MethodGet:
+		// Mutations anchor operations; reads never anchor or adopt, which keeps
+		// polling traffic out of every operation.
+		item.opID = m.mintOp(call.StripeRequestID,
+			outboundSeedRefs(callDisplayPath(call), call.RespBody))
+		item.isAnchor = true
 	}
 	m.allCalls = append([]callItem{item}, m.allCalls...)
 	if m.maxCalls > 0 && len(m.allCalls) > m.maxCalls {
 		m.allCalls = m.allCalls[:m.maxCalls]
 	}
+}
+
+// mintOp starts a new operation, registering the request id (for sync webhook
+// joins) and the seed refs (for async adoption).
+func (m *Model) mintOp(reqID string, refs []string) uint64 {
+	m.nextOpID++
+	op := m.nextOpID
+	if reqID != "" {
+		m.opByReq[reqID] = op
+	}
+	m.accreteRefs(op, refs)
+	return op
+}
+
+// assignWebhookOp places a webhook into an operation. Sync events join the
+// operation whose anchor produced their request id; events whose trigger never
+// passed through the proxy (e.g. `stripe trigger`) mint an anchor-less
+// operation so siblings sharing the request id still group; async events
+// (request.id null — billing cycles, test-clock cascades) are adopted by the
+// most recent operation that knows any of their object refs.
+func (m *Model) assignWebhookOp(info webhookInfo) uint64 {
+	if info.requestID != "" {
+		if op, ok := m.opByReq[info.requestID]; ok {
+			m.accreteRefs(op, info.refs)
+			return op
+		}
+		return m.mintOp(info.requestID, info.refs)
+	}
+	var best uint64
+	for _, r := range info.refs {
+		if op, ok := m.opByRef[r]; ok && op > best {
+			best = op
+		}
+	}
+	if best != 0 {
+		m.accreteRefs(best, info.refs)
+	}
+	return best
+}
+
+// accreteRefs records op as the most recent operation to touch each ref, so
+// later async events chain transitively (renewal invoice → payment intent →
+// charge) back to the same trigger.
+func (m *Model) accreteRefs(op uint64, refs []string) {
+	for _, r := range refs {
+		m.opByRef[r] = op
+	}
+}
+
+// opMemberCount reports how many captured items belong to op.
+func (m Model) opMemberCount(op uint64) int {
+	if op == 0 {
+		return 0
+	}
+	n := 0
+	for _, c := range m.allCalls {
+		if c.opID == op {
+			n++
+		}
+	}
+	return n
+}
+
+// operationLabel names an operation by its anchoring call. Anchor-less
+// operations (the trigger never passed through the proxy) get a generic label.
+func (m Model) operationLabel(op uint64) string {
+	for _, c := range m.allCalls {
+		if c.opID == op && c.isAnchor {
+			return c.call.Method + " " + callDisplayPath(c.call)
+		}
+	}
+	return "uncaptured trigger"
+}
+
+// enterRelation focuses the selected row's operation: hide mode shows only the
+// members (oldest first, anchor on top), dim mode fades everything else in
+// place. A selection without an operation, or whose operation has no other
+// members, is a no-op — so without webhook traffic the keys stay inert.
+func (m *Model) enterRelation(dim bool) {
+	if m.selOpID == 0 || m.opMemberCount(m.selOpID) < 2 {
+		return
+	}
+	m.relationOpID = m.selOpID
+	m.relationDim = dim
+	m.rebuildList()
+}
+
+func (m *Model) exitRelation() {
+	m.relationOpID = 0
+	m.relationDim = false
+	m.rebuildList()
 }
 
 // inputActive reports whether a text-entry mode is capturing keystrokes, so
@@ -257,6 +371,12 @@ func (m *Model) clearHistory() {
 	m.groupFilterID = ""
 	m.focused = focusList
 	m.tree.focused = false
+	m.nextOpID = 0
+	m.opByReq = map[string]uint64{}
+	m.opByRef = map[string]uint64{}
+	m.relationOpID = 0
+	m.relationDim = false
+	m.selOpID = 0
 	m.rebuildList()
 	if m.OnClear != nil {
 		m.OnClear()
@@ -274,6 +394,7 @@ func (m *Model) syncTree() {
 	m.loadedID = sel.id
 	m.selected = sel.call
 	m.selWebhook = sel.webhook
+	m.selOpID = sel.opID
 	m.hasSel = true
 	m.tree.setCall(sel.call)
 	m.layout()

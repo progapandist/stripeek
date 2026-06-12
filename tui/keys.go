@@ -38,6 +38,8 @@ var (
 	keyInspect      = kb.NewBinding(kb.WithKeys("enter"))
 	keyFilter       = kb.NewBinding(kb.WithKeys("/"))
 	keyToggleGroups = kb.NewBinding(kb.WithKeys("g"))
+	keyRelate       = kb.NewBinding(kb.WithKeys("r"))
+	keyRelateDim    = kb.NewBinding(kb.WithKeys("ctrl+r"))
 )
 
 // matches reports whether msg triggers binding b.

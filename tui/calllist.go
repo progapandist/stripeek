@@ -21,9 +21,11 @@ const (
 
 // callItem is a captured call as a bubbles/list entry.
 type callItem struct {
-	call    proxy.Call
-	id      uint64
-	webhook webhookInfo // derived once from the event body; zero for outbound calls
+	call     proxy.Call
+	id       uint64
+	webhook  webhookInfo // derived once from the event body; zero for outbound calls
+	opID     uint64      // operation this item belongs to; 0 = none
+	isAnchor bool        // true for the mutating call that started the operation
 }
 
 // FilterValue is what the "/" list filter matches against: the event name for a
@@ -35,33 +37,20 @@ func (c callItem) FilterValue() string {
 	return callDisplayPath(c.call)
 }
 
-func (c callItem) statusToken(selected bool) string {
-	sty := styleOK
-	if c.call.Status >= 400 {
-		sty = styleErr
-	}
-	if selected {
-		sty = sty.Bold(true)
-	}
-	return sty.Render(fmt.Sprintf("%d", c.call.Status))
-}
-
-func (c callItem) timeLatency() string {
-	return styleDim.Render(fmt.Sprintf("%s  %dms",
-		c.call.Time.Format("15:04:05 MST"),
-		c.call.Latency.Milliseconds()))
-}
-
 // renderRows lays a call out over the delegate's two rows: a direction glyph,
 // then "METHOD path STATUS" (outbound) or "event.name STATUS" (webhook), with
 // "time latency" below. The label is middle-truncated so the glyph and status
-// stay visible and the metadata keeps its own dedicated line.
-func (c callItem) renderRows(contentW int, selected bool) (string, string) {
+// stay visible and the metadata keeps its own dedicated line. While a relation
+// mode is active, non-members render entirely faint (dimmed) and the focused
+// operation's anchor gets an accent glyph.
+func (c callItem) renderRows(contentW int, selected, dimmed, anchor bool) (string, string) {
 	glyph, glyphSty := glyphOutbound, styleDirOut
 	if c.call.IsWebhook {
 		glyph, glyphSty = glyphInbound, styleDirIn
 	}
-	dir := glyphSty.Render(glyph)
+	if anchor {
+		glyphSty = styleAnchor // the call that started the focused operation
+	}
 
 	// Webhook rows with a known event read by event name and drop the method
 	// token (it's always POST); everything else keeps "METHOD path".
@@ -75,20 +64,29 @@ func (c callItem) renderRows(contentW int, selected bool) (string, string) {
 			showMethod = false
 		}
 	}
+	statusSty := styleOK
+	if c.call.Status >= 400 {
+		statusSty = styleErr
+	}
+	methodSty := methodStyle(c.call.Method)
 	if selected {
 		labelSty = labelSty.Bold(true)
+		statusSty = statusSty.Bold(true)
+		methodSty = methodSty.Bold(true)
+	}
+	metaSty := styleDim
+	if dimmed {
+		glyphSty, labelSty, statusSty, methodSty, metaSty =
+			styleFaint, styleFaint, styleFaint, styleFaint, styleFaint
 	}
 
-	status := c.statusToken(selected)
+	dir := glyphSty.Render(glyph)
+	status := statusSty.Render(fmt.Sprintf("%d", c.call.Status))
 	dirW := lipgloss.Width(dir) + 1       // glyph + separating space
 	statusW := lipgloss.Width(status) + 1 // separating space + status
 
 	prefix, prefixW := "", 0
 	if showMethod {
-		methodSty := methodStyle(c.call.Method)
-		if selected {
-			methodSty = methodSty.Bold(true)
-		}
 		method := methodSty.Render(c.call.Method)
 		prefix = method + " "
 		prefixW = lipgloss.Width(method) + 1 // method + separating space
@@ -97,7 +95,10 @@ func (c callItem) renderRows(contentW int, selected bool) (string, string) {
 	availLabel := max(1, contentW-dirW-prefixW-statusW)
 	label = truncateMiddle(label, availLabel)
 	top := dir + " " + prefix + labelSty.Render(label) + " " + status
-	return fitLine(top, contentW), fitLine(c.timeLatency(), contentW)
+	bottom := metaSty.Render(fmt.Sprintf("%s  %dms",
+		c.call.Time.Format("15:04:05 MST"),
+		c.call.Latency.Milliseconds()))
+	return fitLine(top, contentW), fitLine(bottom, contentW)
 }
 
 // truncateMiddle shortens s to fit width display columns, replacing the middle
@@ -138,25 +139,33 @@ func suffixWithin(s string, width int) string {
 }
 
 // callDelegate renders each call as a two-line entry with a group/selection
-// border in the gutter.
-type callDelegate struct{}
+// border in the gutter. It carries the active relation mode so dim mode can
+// fade non-members at render time without touching list membership.
+type callDelegate struct {
+	relOpID uint64 // operation focused by a relation mode; 0 = none
+	dim     bool   // dim mode: fade non-members instead of hiding them
+}
 
 func (callDelegate) Height() int                         { return 2 }
 func (callDelegate) Spacing() int                        { return 0 }
 func (callDelegate) Update(tea.Msg, *list.Model) tea.Cmd { return nil }
 
-func (callDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
+func (d callDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	c, ok := item.(callItem)
 	if !ok || m.Width() <= 0 {
 		return
 	}
 
 	selected := index == m.Index()
+	dimmed := d.relOpID != 0 && d.dim && c.opID != d.relOpID
+	anchor := d.relOpID != 0 && c.opID == d.relOpID && c.isAnchor
+	// Group bars keep their colors in every mode: membership and decoration
+	// are separate layers, so relation modes never disturb manual groups.
 	border := callBorder(c.call.Group, false)
 	selectedBorder := callBorder(c.call.Group, selected)
 
 	contentW := max(1, m.Width()-2)
-	top, bottom := c.renderRows(contentW, selected)
+	top, bottom := c.renderRows(contentW, selected, dimmed, anchor)
 	_, _ = fmt.Fprintf(w, "%s %s\n%s %s", selectedBorder, top, border, bottom)
 }
 
@@ -215,8 +224,18 @@ func (m *Model) updateList(msg tea.KeyMsg) tea.Cmd {
 	case matches(msg, keyToggleGroups):
 		m.toggleGroups()
 		return nil
+	case matches(msg, keyRelate):
+		m.enterRelation(false)
+		return nil
+	case matches(msg, keyRelateDim):
+		m.enterRelation(true)
+		return nil
 	case matches(msg, keyDismiss):
-		if m.filter != "" {
+		// esc precedence: relation/dim mode, then the text filter.
+		switch {
+		case m.relationOpID != 0:
+			m.exitRelation()
+		case m.filter != "":
 			m.filter = ""
 			m.rebuildList()
 		}
@@ -282,9 +301,16 @@ func (m Model) visibleListItems() int {
 // rebuildList re-applies the current filter and restores the previous selection.
 func (m *Model) rebuildList() {
 	m.rebuildGroups()
+	m.list.SetDelegate(callDelegate{relOpID: m.relationOpID, dim: m.relationDim})
+	relationFocus := m.relationOpID != 0 && !m.relationDim
 	items := make([]list.Item, 0, len(m.allCalls))
 	for _, c := range m.allCalls {
-		if m.groupFilterID != "" && (c.call.Group == nil || c.call.Group.ID != m.groupFilterID) {
+		if relationFocus && c.opID != m.relationOpID {
+			continue
+		}
+		// Relation modes bypass the group filter: every member of the
+		// operation shows regardless of its manual group.
+		if m.relationOpID == 0 && m.groupFilterID != "" && (c.call.Group == nil || c.call.Group.ID != m.groupFilterID) {
 			continue
 		}
 		if m.filter == "" || strings.Contains(c.FilterValue(), m.filter) {
@@ -297,6 +323,7 @@ func (m *Model) rebuildList() {
 		m.hasSel = false
 		m.selected = proxy.Call{}
 		m.selWebhook = webhookInfo{}
+		m.selOpID = 0
 		m.tree.clear()
 		return
 	}
@@ -333,6 +360,16 @@ func (m Model) callCountLine() string {
 	shown := len(m.list.Items())
 	total := len(m.allCalls)
 	suffix := m.callProgressLabel() + m.droppedLabel()
+	if m.relationOpID != 0 {
+		label := truncateMiddle(m.operationLabel(m.relationOpID), 40)
+		if m.relationDim {
+			count := m.opMemberCount(m.relationOpID)
+			return styleDim.Render(fmt.Sprintf("%d related to %s", count, label)) +
+				styleFaint.Render("   esc exits") + suffix
+		}
+		return styleDim.Render(fmt.Sprintf("%d in operation %s", shown, label)) +
+			styleFaint.Render("   esc exits") + suffix
+	}
 	if m.groupFilterID != "" {
 		label := m.groupLabel(m.groupFilterID)
 		if m.filter != "" {

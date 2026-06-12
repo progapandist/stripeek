@@ -87,6 +87,8 @@ var (
 	styleWebhook = lipgloss.NewStyle().Bold(true).Foreground(colWebhook)
 	styleDirIn   = lipgloss.NewStyle().Foreground(colWebhook)
 	styleDirOut  = lipgloss.NewStyle().Foreground(colDim)
+	// The mutating call that anchors the relation-focused operation.
+	styleAnchor = lipgloss.NewStyle().Bold(true).Foreground(colAccent)
 
 	// Account context badges: test reads cool/benign, live runs warm to flag
 	// that requests are touching real data.
