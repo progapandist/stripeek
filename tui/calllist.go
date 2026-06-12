@@ -21,16 +21,16 @@ const (
 
 // callItem is a captured call as a bubbles/list entry.
 type callItem struct {
-	call      proxy.Call
-	id        uint64
-	eventType string // webhook body `type`, e.g. "customer.subscription.created"
+	call    proxy.Call
+	id      uint64
+	webhook webhookInfo // derived once from the event body; zero for outbound calls
 }
 
 // FilterValue is what the "/" list filter matches against: the event name for a
 // webhook (so /sub finds customer.subscription.*), otherwise the request path.
 func (c callItem) FilterValue() string {
-	if c.call.IsWebhook && c.eventType != "" {
-		return c.eventType
+	if c.call.IsWebhook && c.webhook.eventType != "" {
+		return c.webhook.eventType
 	}
 	return callDisplayPath(c.call)
 }
@@ -70,8 +70,8 @@ func (c callItem) renderRows(contentW int, selected bool) (string, string) {
 	showMethod := true
 	if c.call.IsWebhook {
 		labelSty = styleWebhook // webhook rows pop in magenta
-		if c.eventType != "" {
-			label = c.eventType
+		if c.webhook.eventType != "" {
+			label = c.webhook.eventType
 			showMethod = false
 		}
 	}
@@ -296,6 +296,7 @@ func (m *Model) rebuildList() {
 		m.loadedID = 0
 		m.hasSel = false
 		m.selected = proxy.Call{}
+		m.selWebhook = webhookInfo{}
 		m.tree.clear()
 		return
 	}

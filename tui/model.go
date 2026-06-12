@@ -48,6 +48,7 @@ type Model struct {
 	filter        string // path substring filter
 	filtering     bool   // true while typing a filter
 	selected      proxy.Call
+	selWebhook    webhookInfo // derived metadata for the selected call; zero unless it's a webhook
 	hasSel        bool
 	loadedID      uint64
 	width         int
@@ -210,7 +211,7 @@ func (m *Model) prependCall(call proxy.Call) {
 	m.nextID++
 	item := callItem{call: call, id: m.nextID}
 	if call.IsWebhook {
-		item.eventType, _ = webhookMeta(call.ReqBody)
+		item.webhook = webhookMeta(call.ReqBody)
 	}
 	m.allCalls = append([]callItem{item}, m.allCalls...)
 	if m.maxCalls > 0 && len(m.allCalls) > m.maxCalls {
@@ -272,6 +273,7 @@ func (m *Model) syncTree() {
 	}
 	m.loadedID = sel.id
 	m.selected = sel.call
+	m.selWebhook = sel.webhook
 	m.hasSel = true
 	m.tree.setCall(sel.call)
 	m.layout()

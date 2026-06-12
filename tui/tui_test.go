@@ -934,29 +934,38 @@ func TestCallRowMarksDirectionByKind(t *testing.T) {
 	}
 }
 
-func TestWebhookMetaExtractsTypeAndObjectID(t *testing.T) {
-	body := []byte(`{"id":"evt_1","type":"customer.subscription.created","data":{"object":{"id":"sub_abc123","object":"subscription"}}}`)
-	gotType, gotID := webhookMeta(body)
-	if gotType != "customer.subscription.created" || gotID != "sub_abc123" {
-		t.Fatalf("webhookMeta = %q,%q", gotType, gotID)
+func TestWebhookMetaExtractsEventFields(t *testing.T) {
+	body := []byte(`{"id":"evt_1","type":"customer.subscription.created","livemode":false,"data":{"object":{"id":"sub_abc123","object":"subscription"}}}`)
+	got := webhookMeta(body)
+	want := webhookInfo{eventType: "customer.subscription.created", eventID: "evt_1", livemode: "test"}
+	if got != want {
+		t.Fatalf("webhookMeta = %+v, want %+v", got, want)
 	}
 
-	// Truncated / non-event bodies yield empty strings so callers fall back.
+	if got := webhookMeta([]byte(`{"id":"evt_2","type":"charge.succeeded","livemode":true}`)); got.livemode != "live" {
+		t.Fatalf("livemode true should map to %q, got %+v", "live", got)
+	}
+	// Absent livemode stays unknown rather than defaulting to test.
+	if got := webhookMeta([]byte(`{"id":"evt_3","type":"charge.succeeded"}`)); got.livemode != "" {
+		t.Fatalf("missing livemode should stay empty, got %+v", got)
+	}
+
+	// Truncated / non-event bodies yield the zero value so callers fall back.
 	for _, bad := range [][]byte{
 		[]byte(`{"id":"evt_1","type":"customer.subscriptio`), // truncated JSON
 		[]byte(`not json at all`),
 		nil,
 	} {
-		if ty, id := webhookMeta(bad); ty != "" || id != "" {
-			t.Fatalf("webhookMeta(%q) = %q,%q, want empty", bad, ty, id)
+		if got := webhookMeta(bad); got != (webhookInfo{}) {
+			t.Fatalf("webhookMeta(%q) = %+v, want zero value", bad, got)
 		}
 	}
 }
 
 func TestWebhookRowUsesEventNameAndFilter(t *testing.T) {
 	hook := callItem{
-		call:      proxy.Call{IsWebhook: true, Method: "POST", RequestURI: "/webhooks", Status: 200, Time: time.Date(2026, 5, 26, 7, 53, 0, 0, time.UTC)},
-		eventType: "customer.subscription.created",
+		call:    proxy.Call{IsWebhook: true, Method: "POST", RequestURI: "/webhooks", Status: 200, Time: time.Date(2026, 5, 26, 7, 53, 0, 0, time.UTC)},
+		webhook: webhookInfo{eventType: "customer.subscription.created"},
 	}
 	out := callItem{
 		call: proxy.Call{Method: "GET", RequestURI: "/v1/customers", Status: 200, Time: time.Date(2026, 5, 26, 7, 53, 0, 0, time.UTC)},
@@ -987,6 +996,50 @@ func TestWebhookRowUsesEventNameAndFilter(t *testing.T) {
 	bareTop, _ := bare.renderRows(60, false)
 	if !strings.Contains(bareTop, "/webhooks") {
 		t.Fatalf("bare webhook row should fall back to path:\n%q", bareTop)
+	}
+}
+
+func TestInspectorHeaderShowsEventForWebhook(t *testing.T) {
+	hook := sampleCall()
+	hook.IsWebhook = true
+	hook.RequestURI = "/webhooks"
+	hook.Path = "/webhooks"
+	hook.ReqBody = []byte(`{"id":"evt_42","type":"customer.subscription.created","livemode":false,"data":{"object":{"id":"sub_1"}}}`)
+
+	m := drive(New(), tea.WindowSizeMsg{Width: 100, Height: 30}, NewCallMsg(hook))
+	header := strings.Join(m.detailHeaderLines(60), "\n")
+	for _, want := range []string{"customer.subscription.created", "evt_42", "200", "TEST"} {
+		if !strings.Contains(header, want) {
+			t.Fatalf("webhook header missing %q:\n%s", want, header)
+		}
+	}
+	for _, reject := range []string{"POST", "/webhooks"} {
+		if strings.Contains(header, reject) {
+			t.Fatalf("webhook header should not show %q:\n%s", reject, header)
+		}
+	}
+
+	// A webhook whose body didn't parse keeps the method/path header.
+	bare := sampleCall()
+	bare.IsWebhook = true
+	bare.RequestURI = "/webhooks"
+	bare.Path = "/webhooks"
+	bare.ReqBody = []byte(`not json`)
+	m = drive(New(), tea.WindowSizeMsg{Width: 100, Height: 30}, NewCallMsg(bare))
+	header = strings.Join(m.detailHeaderLines(60), "\n")
+	if !strings.Contains(header, "POST") || !strings.Contains(header, "/webhooks") {
+		t.Fatalf("unparseable webhook should fall back to method/path header:\n%s", header)
+	}
+
+	// Outbound calls are unchanged: method/path title, key-derived badge.
+	out := sampleCall()
+	out.KeyMode = "live"
+	m = drive(New(), tea.WindowSizeMsg{Width: 100, Height: 30}, NewCallMsg(out))
+	header = strings.Join(m.detailHeaderLines(60), "\n")
+	for _, want := range []string{"POST", "/v1/customers", "LIVE"} {
+		if !strings.Contains(header, want) {
+			t.Fatalf("outbound header missing %q:\n%s", want, header)
+		}
 	}
 }
 

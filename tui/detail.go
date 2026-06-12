@@ -6,6 +6,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/progapandist/stripeek/proxy"
 )
 
 func (m Model) detailHeaderLines(width int) []string {
@@ -14,19 +16,11 @@ func (m Model) detailHeaderLines(width int) []string {
 	}
 	c := m.selected
 
-	lines := []string{}
-	method := lipgloss.NewStyle().Bold(true).Render(c.Method + " ")
-	methodW := lipgloss.Width(method)
-	pathChunks := wrapHeaderText(callDisplayPath(c), max(1, width-methodW), max(1, width-methodW))
-	if len(pathChunks) == 0 {
-		pathChunks = []string{""}
-	}
-	for i, chunk := range pathChunks {
-		prefix := strings.Repeat(" ", methodW)
-		if i == 0 {
-			prefix = method
-		}
-		lines = append(lines, fitLine(prefix+chunk, width))
+	var lines []string
+	if c.IsWebhook && m.selWebhook.eventType != "" {
+		lines = webhookTitleLines(m.selWebhook, width)
+	} else {
+		lines = methodPathLines(c, width)
 	}
 
 	statusStyle := styleOK
@@ -38,7 +32,12 @@ func (m Model) detailHeaderLines(width int) []string {
 	hint := styleDim.Render("(h to toggle headers)")
 	lines = append(lines, fitLine(status+"  "+latency+"  "+hint, width))
 
-	if badge := modeBadge(c.KeyMode); badge != "" {
+	mode := c.KeyMode
+	if c.IsWebhook {
+		// Webhooks carry no API key, so the badge reads the event's livemode.
+		mode = m.selWebhook.livemode
+	}
+	if badge := modeBadge(mode); badge != "" {
 		lines = append(lines, fitLine(badge, width))
 	}
 
@@ -54,6 +53,39 @@ func (m Model) detailHeaderLines(width int) []string {
 			}
 			lines = append(lines, fitLine(prefix+groupStyle(c.Group).Render(chunk), width))
 		}
+	}
+	return lines
+}
+
+// methodPathLines renders the outbound header title: "METHOD path", with
+// continuation lines indented past the method.
+func methodPathLines(c proxy.Call, width int) []string {
+	lines := []string{}
+	method := lipgloss.NewStyle().Bold(true).Render(c.Method + " ")
+	methodW := lipgloss.Width(method)
+	pathChunks := wrapHeaderText(callDisplayPath(c), max(1, width-methodW), max(1, width-methodW))
+	if len(pathChunks) == 0 {
+		pathChunks = []string{""}
+	}
+	for i, chunk := range pathChunks {
+		prefix := strings.Repeat(" ", methodW)
+		if i == 0 {
+			prefix = method
+		}
+		lines = append(lines, fitLine(prefix+chunk, width))
+	}
+	return lines
+}
+
+// webhookTitleLines renders the webhook header title: the event name in place
+// of "METHOD path", with the evt_… id beneath it.
+func webhookTitleLines(info webhookInfo, width int) []string {
+	lines := []string{}
+	for _, chunk := range wrapHeaderText(info.eventType, width, width) {
+		lines = append(lines, fitLine(styleWebhook.Render(chunk), width))
+	}
+	if info.eventID != "" {
+		lines = append(lines, fitLine(styleDim.Render(info.eventID), width))
 	}
 	return lines
 }

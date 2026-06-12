@@ -2,21 +2,33 @@ package tui
 
 import "encoding/json"
 
-// webhookMeta pulls the event type and primary object id from a forwarded Stripe
-// event body. Returns zero values when the body isn't a recognisable event
-// (including when truncation broke the JSON, which is fine — callers fall back
-// to the request path).
-func webhookMeta(body []byte) (eventType, objectID string) {
+// webhookInfo is presentation metadata derived once from a forwarded Stripe
+// event body, so rows and the inspector header never re-parse JSON per frame.
+type webhookInfo struct {
+	eventType string // body `type`, e.g. "customer.subscription.created"
+	eventID   string // body `id`, evt_…
+	livemode  string // "live" or "test" (modeBadge vocabulary); "" when unknown
+}
+
+// webhookMeta pulls event metadata from a forwarded Stripe event body. Returns
+// the zero value when the body isn't a recognisable event (including when
+// truncation broke the JSON, which is fine — callers fall back to the request
+// path).
+func webhookMeta(body []byte) webhookInfo {
 	var e struct {
-		Type string `json:"type"`
-		Data struct {
-			Object struct {
-				ID string `json:"id"`
-			} `json:"object"`
-		} `json:"data"`
+		ID       string `json:"id"`
+		Type     string `json:"type"`
+		Livemode *bool  `json:"livemode"`
 	}
-	if json.Unmarshal(body, &e) == nil {
-		return e.Type, e.Data.Object.ID
+	if json.Unmarshal(body, &e) != nil {
+		return webhookInfo{}
 	}
-	return "", ""
+	info := webhookInfo{eventType: e.Type, eventID: e.ID}
+	if e.Livemode != nil {
+		info.livemode = "test"
+		if *e.Livemode {
+			info.livemode = "live"
+		}
+	}
+	return info
 }
