@@ -2,6 +2,11 @@
 /stripeek
 /dist/
 
+# Demo GIF is hosted as a GitHub attachment, not committed (the .tape and
+# fixture that regenerate it are tracked). Drag demo/stripeek.gif into a GitHub
+# comment/release to mint its URL, then reference that in the README.
+/demo/stripeek.gif
+
 # Go
 vendor/
 
