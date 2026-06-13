@@ -7,10 +7,10 @@ stripeek runs as a reverse proxy between your application and `api.stripe.com`. 
 > **For local development only.**  
 > Redirecting your SDK's base URL to stripeek means your app routes all Stripe traffic through the proxy. If stripeek isn't running, every Stripe API call will fail. Never commit these changes or deploy them to staging or production — keep them in local dev overrides (environment-specific initializers, `.env.development`, or a dev-only boot file).
 
-<img width="1679" height="1014" alt="image" src="https://github.com/user-attachments/assets/b8071094-0983-43e0-81de-10a37a12196a" />
+<img width="1496" height="1075" alt="image" src="https://github.com/user-attachments/assets/67473baf-8b5c-471c-87a9-3fa891711180" />
 
-With request groups and filtering: 
-<img width="1589" height="874" alt="image" src="https://github.com/user-attachments/assets/2d989c3d-d952-4cc3-8c51-3e5ebc38e4be" />
+With request groups and filtering:
+<img width="1496" height="1075" alt="image" src="https://github.com/user-attachments/assets/8b45789f-3160-40a9-a9d7-2904b4cf75b0" />
 
 
 ## Installation
@@ -19,7 +19,10 @@ With request groups and filtering:
 go install github.com/progapandist/stripeek/cmd/stripeek@latest
 ```
 
-Requires Go 1.24 or later. The binary lands in `$(go env GOPATH)/bin` — make sure that's on your `$PATH`.
+Requires Go 1.24 or later. The binary lands in `$(go env GOPATH)/bin` — make sure that's on your `$PATH`. You can also download the binaries for different platforms from the release page. Easier distributions like a Homebrew formula will be added at the later stage when the feature set somewhat stabilizes.
+
+> **Active development.**
+> The tool is under the active development and new features/improvements land often on main before being included in a tagged release, prefer `go install github.com/progapandist/stripeek/cmd/stripeek@main` to install directly from the main branch.
 
 ## Quick start
 
@@ -64,7 +67,7 @@ if os.Getenv("APP_ENV") == "development" {
 
 stripeek proxies every request to the real Stripe API and captures the full request/response pair, including headers, body, status code, latency, and Stripe request ID. Your keys are redacted from captured headers automatically.
 
-## Rails example
+## App setup example (Rails, but the similar approach will apply for other frameworks) 
 
 `config/initializers/stripe.rb`:
 ```ruby
@@ -118,6 +121,11 @@ Omit the variable (or start the server normally) to talk to Stripe directly. Pro
 | `t` / `b` | Jump to top / bottom |
 
 **Groups**
+
+Groups allow you to visually cluster the requests which can be useful when you want to quickly grock all the traffic related to testing a certain feature (e.g., all the requests you make to Stripe when your app's admin interface loads the subscription view). To group the upcoming requests automatically hit `ctrl+g` and the new group will be created and assigned a random name based on color of the markers that will visually separate the requests in the TUI.
+
+<img width="1496" height="1075" alt="image" src="https://github.com/user-attachments/assets/643a84e4-ff69-4706-959b-35b5e313feae" />
+
 
 | Key | Action |
 |---|---|
