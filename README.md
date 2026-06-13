@@ -9,6 +9,7 @@ Stripe integrations are two-way: your app calls the API, and Stripe calls *you* 
 > **For local development only.**  
 > Redirecting your SDK's base URL to stripeek means your app routes all Stripe traffic through the proxy. If stripeek isn't running, every Stripe API call will fail. Never commit these changes or deploy them to staging or production — keep them in local dev overrides (environment-specific initializers, `.env.development`, or a dev-only boot file).
 
+<img width="1320" height="820" alt="stripeek" src="https://github.com/user-attachments/assets/27e34b63-096d-40ac-a6d6-77fce6f5d96b" />
 
 Outbound API calls (`▶`) and inbound webhooks (`◀`) share one timeline. The inspector shows the full request/response pair, with JSON navigation and filtering. The header toggle (`h`) lets you fold the raw HTTP headers in and out of the tree. Pressing `r` on any call or event focuses the related calls and webhooks — the API call that caused an event and every event it produced — so you can see the whole operation in one place, even if the events don't follow the request directly. `ctrl-r` does the same but dims the unrelated calls instead of hiding them, so you can keep the timeline context.
 
